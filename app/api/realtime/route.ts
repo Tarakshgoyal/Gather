@@ -7,6 +7,9 @@ import {
   deletePresence,
   getEmployeePosition,
   latestChatId,
+  latestSignalId,
+  listPresence,
+  listSignals,
   listChatMessages,
   saveEmployeePosition,
   savePresence,
@@ -53,6 +56,11 @@ const globalStore = globalThis as typeof globalThis & {
   gatherSignalSeq?: number;
   gatherChatMessages?: ChatMessage[];
   gatherChatSeq?: number;
+  gatherDbPresenceCache?: { users: Presence[]; fetchedAt: number };
+  gatherDbPresencePromise?: Promise<Presence[] | null>;
+  gatherDbSignalCache?: Map<string, { signals: SignalMessage[]; latestId: number; fetchedAt: number }>;
+  gatherDbSignalPromises?: Map<string, Promise<{ signals: SignalMessage[]; latestId: number }>>;
+  gatherPresencePersistedAt?: Map<string, number>;
 };
 
 const presence = globalStore.gatherPresence ?? new Map<string, Presence>();
@@ -63,6 +71,14 @@ globalStore.gatherSignals = signals;
 globalStore.gatherSignalSeq = globalStore.gatherSignalSeq ?? 0;
 globalStore.gatherChatMessages = chatMessages;
 globalStore.gatherChatSeq = globalStore.gatherChatSeq ?? 0;
+globalStore.gatherDbPresenceCache = globalStore.gatherDbPresenceCache ?? { users: [], fetchedAt: 0 };
+globalStore.gatherDbSignalCache = globalStore.gatherDbSignalCache ?? new Map<string, { signals: SignalMessage[]; latestId: number; fetchedAt: number }>();
+globalStore.gatherDbSignalPromises = globalStore.gatherDbSignalPromises ?? new Map<string, Promise<{ signals: SignalMessage[]; latestId: number }>>();
+globalStore.gatherPresencePersistedAt = globalStore.gatherPresencePersistedAt ?? new Map<string, number>();
+
+const noStoreHeaders = {
+  "Cache-Control": "no-store, max-age=0",
+};
 
 function prune() {
   const now = Date.now();
@@ -78,9 +94,67 @@ function prune() {
   }
 }
 
+async function getSharedPresence() {
+  const now = Date.now();
+  const cached = globalStore.gatherDbPresenceCache ?? { users: [], fetchedAt: 0 };
+  if (now - cached.fetchedAt > 900) {
+    globalStore.gatherDbPresencePromise = globalStore.gatherDbPresencePromise ?? listPresence().finally(() => {
+      globalStore.gatherDbPresencePromise = undefined;
+    });
+    const persistedUsers = await globalStore.gatherDbPresencePromise.catch(() => null);
+    if (persistedUsers) {
+      globalStore.gatherDbPresenceCache = { users: persistedUsers, fetchedAt: now };
+    }
+  }
+
+  const merged = new Map<string, Presence>();
+  for (const user of globalStore.gatherDbPresenceCache?.users ?? []) {
+    if (now - user.updatedAt <= 15_000) merged.set(user.id, user);
+  }
+  for (const user of presence.values()) {
+    if (now - user.updatedAt <= 15_000) {
+      const existing = merged.get(user.id);
+      if (!existing || user.updatedAt >= existing.updatedAt) merged.set(user.id, user);
+    }
+  }
+
+  return Array.from(merged.values());
+}
+
+async function getSharedSignals(userId: string, after: number) {
+  const now = Date.now();
+  const cacheKey = `${userId}:${after}`;
+  const cached = globalStore.gatherDbSignalCache?.get(cacheKey);
+  if (cached && now - cached.fetchedAt <= 900) return cached;
+
+  let promise = globalStore.gatherDbSignalPromises?.get(cacheKey);
+  if (!promise) {
+    promise = Promise.all([
+      listSignals(userId, after).catch(() => null),
+      latestSignalId().catch(() => null),
+    ]).then(([persistedSignals, persistedLatestSignalId]) => ({
+      signals: persistedSignals ?? [],
+      latestId: persistedLatestSignalId ?? 0,
+    })).finally(() => {
+      globalStore.gatherDbSignalPromises?.delete(cacheKey);
+    });
+    globalStore.gatherDbSignalPromises?.set(cacheKey, promise);
+  }
+
+  const result = await promise.catch(() => ({ signals: [], latestId: 0 }));
+  const nextCache = { ...result, fetchedAt: Date.now() };
+  globalStore.gatherDbSignalCache?.set(cacheKey, nextCache);
+  if ((globalStore.gatherDbSignalCache?.size ?? 0) > 50) {
+    for (const [key, value] of globalStore.gatherDbSignalCache ?? []) {
+      if (Date.now() - value.fetchedAt > 10_000) globalStore.gatherDbSignalCache?.delete(key);
+    }
+  }
+  return nextCache;
+}
+
 export async function GET(request: Request) {
   const authUser = getRequestJwtUser(request);
-  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
+  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401, headers: noStoreHeaders });
   prune();
   const url = new URL(request.url);
   const userId = authUser.id;
@@ -88,23 +162,32 @@ export async function GET(request: Request) {
   const channelId = url.searchParams.get("channelId");
   const afterChat = Number(url.searchParams.get("afterChat") ?? "0");
   const positionFor = url.searchParams.get("positionFor");
+  const [sharedPresence, sharedSignals] = await Promise.all([
+    getSharedPresence(),
+    getSharedSignals(userId, after),
+  ]);
   const persistedChatMessages = channelId ? await listChatMessages(channelId, afterChat).catch(() => null) : null;
   const persistedLatestChatId = channelId ? await latestChatId().catch(() => null) : null;
   const savedPosition = positionFor === authUser.id ? await getEmployeePosition(authUser.id).catch(() => null) : null;
+  const localSignals = signals.filter((message) => message.id > after && (message.to === userId || message.to === "*"));
+  const mergedSignals = new Map<number, SignalMessage>();
+  for (const message of sharedSignals.signals) mergedSignals.set(message.id, message);
+  for (const message of localSignals) mergedSignals.set(message.id, message);
+  const currentLatestSignalId = Math.max(globalStore.gatherSignalSeq ?? 0, sharedSignals.latestId);
 
   return Response.json({
-    users: Array.from(presence.values()),
-    signals: signals.filter((message) => message.id > after && (message.to === userId || message.to === "*")),
-    latestSignalId: globalStore.gatherSignalSeq ?? 0,
+    users: sharedPresence,
+    signals: Array.from(mergedSignals.values()).sort((a, b) => a.id - b.id),
+    latestSignalId: currentLatestSignalId,
     chatMessages: persistedChatMessages ?? (channelId ? chatMessages.filter((message) => message.channelId === channelId && message.id > afterChat) : []),
     latestChatId: persistedLatestChatId ?? globalStore.gatherChatSeq ?? 0,
     savedPosition,
-  });
+  }, { headers: noStoreHeaders });
 }
 
 export async function POST(request: Request) {
   const authUser = getRequestJwtUser(request);
-  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
+  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401, headers: noStoreHeaders });
   const body = await request.json();
   prune();
 
@@ -119,16 +202,28 @@ export async function POST(request: Request) {
       updatedAt: Date.now(),
     };
     presence.set(user.id, user);
-    void savePresence(user).catch(() => null);
+    const lastPersistedAt = globalStore.gatherPresencePersistedAt?.get(user.id) ?? 0;
+    if (Date.now() - lastPersistedAt > 700) {
+      globalStore.gatherPresencePersistedAt?.set(user.id, Date.now());
+      await savePresence(user).catch(() => null);
+    }
     void saveEmployeePosition(authUser.id, body.user.position).catch(() => null);
 
-    return Response.json({ ok: true });
+    return Response.json({ ok: true }, { headers: noStoreHeaders });
   }
 
   if (body.type === "signal") {
-    globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
+    const persistedId = await createSignal({
+      from: authUser.id,
+      to: String(body.message.to),
+      meetingId: String(body.message.meetingId),
+      kind: body.message.kind,
+      payload: body.message.payload,
+    }).catch(() => null);
+    globalStore.gatherSignalSeq = Math.max(globalStore.gatherSignalSeq ?? 0, persistedId ?? 0) + (persistedId ? 0 : 1);
+    const signalId = persistedId ?? globalStore.gatherSignalSeq;
     signals.push({
-      id: globalStore.gatherSignalSeq,
+      id: signalId,
       from: authUser.id,
       to: String(body.message.to),
       meetingId: String(body.message.meetingId),
@@ -136,21 +231,14 @@ export async function POST(request: Request) {
       payload: body.message.payload,
       createdAt: Date.now(),
     });
-    void createSignal({
-      from: authUser.id,
-      to: String(body.message.to),
-      meetingId: String(body.message.meetingId),
-      kind: body.message.kind,
-      payload: body.message.payload,
-    }).catch(() => null);
 
-    return Response.json({ ok: true, id: globalStore.gatherSignalSeq });
+    return Response.json({ ok: true, id: signalId }, { headers: noStoreHeaders });
   }
 
   if (body.type === "chat") {
     const text = String(body.message.body ?? "").trim();
     if (!text) {
-      return Response.json({ error: "Message cannot be empty" }, { status: 400 });
+      return Response.json({ error: "Message cannot be empty" }, { status: 400, headers: noStoreHeaders });
     }
 
     const persistedMessage = await createChatMessage({
@@ -160,7 +248,7 @@ export async function POST(request: Request) {
       body: text.slice(0, 2000),
     }).catch(() => null);
     if (persistedMessage) {
-      return Response.json({ ok: true, message: persistedMessage });
+      return Response.json({ ok: true, message: persistedMessage }, { headers: noStoreHeaders });
     }
 
     globalStore.gatherChatSeq = (globalStore.gatherChatSeq ?? 0) + 1;
@@ -174,7 +262,7 @@ export async function POST(request: Request) {
     };
     chatMessages.push(message);
 
-    return Response.json({ ok: true, message });
+    return Response.json({ ok: true, message }, { headers: noStoreHeaders });
   }
 
   if (body.type === "leave") {
@@ -182,9 +270,17 @@ export async function POST(request: Request) {
     presence.delete(userId);
     void deletePresence(userId).catch(() => null);
 
-    globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
+    const persistedId = await createSignal({
+      from: userId,
+      to: "*",
+      meetingId: "*",
+      kind: "leave",
+      payload: {},
+    }).catch(() => null);
+    globalStore.gatherSignalSeq = Math.max(globalStore.gatherSignalSeq ?? 0, persistedId ?? 0) + (persistedId ? 0 : 1);
+    const signalId = persistedId ?? globalStore.gatherSignalSeq;
     signals.push({
-      id: globalStore.gatherSignalSeq,
+      id: signalId,
       from: userId,
       to: "*",
       meetingId: "*",
@@ -192,16 +288,9 @@ export async function POST(request: Request) {
       payload: {},
       createdAt: Date.now(),
     });
-    void createSignal({
-      from: userId,
-      to: "*",
-      meetingId: "*",
-      kind: "leave",
-      payload: {},
-    }).catch(() => null);
 
-    return Response.json({ ok: true });
+    return Response.json({ ok: true }, { headers: noStoreHeaders });
   }
 
-  return Response.json({ error: "Unknown realtime message" }, { status: 400 });
+  return Response.json({ error: "Unknown realtime message" }, { status: 400, headers: noStoreHeaders });
 }

@@ -532,6 +532,7 @@ export default function Home() {
     if (current) {
       await fetch(SIGNAL_URL, {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "leave", userId: current.id }),
       }).catch(() => undefined);
@@ -730,6 +731,7 @@ export default function Home() {
   const sendSignal = useCallback(async (message: Omit<SignalMessage, "id">) => {
     await fetch(SIGNAL_URL, {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "signal", message }),
     });
@@ -885,6 +887,7 @@ export default function Home() {
       if (!currentSession) return;
       await fetch(SIGNAL_URL, {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "presence",
@@ -918,7 +921,7 @@ export default function Home() {
       const currentSession = sessionRef.current;
       if (!currentSession) return;
       const query = new URLSearchParams({ userId: currentSession.id, after: String(lastSignalIdRef.current) });
-      const response = await fetch(`${SIGNAL_URL}?${query.toString()}`).catch(() => null);
+      const response = await fetch(`${SIGNAL_URL}?${query.toString()}`, { cache: "no-store" }).catch(() => null);
       if (!response?.ok || stopped) return;
       const data = await response.json() as { users: Person[]; signals: SignalMessage[]; latestSignalId: number };
       setRemoteUsers(data.users.filter((user) => user.id !== currentSession.id));
@@ -980,6 +983,7 @@ export default function Home() {
     setChatDraft("");
     const response = await fetch(SIGNAL_URL, {
       method: "POST",
+      cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "chat",
