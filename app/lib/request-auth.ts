@@ -18,3 +18,9 @@ export async function getRequestUser(request: Request) {
   return { id: user.id, name: user.name, email: user.email, skin: user.skin };
 }
 
+export function getRequestJwtUser(request: Request) {
+  const token = readCookie(request.headers.get("cookie"), AUTH_COOKIE);
+  const payload = verifySessionToken(token ? decodeURIComponent(token) : undefined);
+  if (!payload) return null;
+  return { id: payload.sub, name: payload.name, email: payload.email, skin: payload.skin };
+}

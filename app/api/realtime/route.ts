@@ -7,15 +7,11 @@ import {
   deletePresence,
   getEmployeePosition,
   latestChatId,
-  latestSignalId,
   listChatMessages,
-  listPresence,
-  listSignals,
-  pruneRealtimeState,
   saveEmployeePosition,
   savePresence,
 } from "@/app/lib/db";
-import { getRequestUser } from "@/app/lib/request-auth";
+import { getRequestJwtUser } from "@/app/lib/request-auth";
 
 type Point = {
   x: number;
@@ -83,10 +79,9 @@ function prune() {
 }
 
 export async function GET(request: Request) {
-  const authUser = await getRequestUser(request);
+  const authUser = getRequestJwtUser(request);
   if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
   prune();
-  await pruneRealtimeState().catch(() => null);
   const url = new URL(request.url);
   const userId = authUser.id;
   const after = Number(url.searchParams.get("after") ?? "0");
@@ -95,15 +90,12 @@ export async function GET(request: Request) {
   const positionFor = url.searchParams.get("positionFor");
   const persistedChatMessages = channelId ? await listChatMessages(channelId, afterChat).catch(() => null) : null;
   const persistedLatestChatId = channelId ? await latestChatId().catch(() => null) : null;
-  const persistedPresence = await listPresence().catch(() => null);
-  const persistedSignals = await listSignals(userId, after).catch(() => null);
-  const persistedLatestSignalId = await latestSignalId().catch(() => null);
   const savedPosition = positionFor === authUser.id ? await getEmployeePosition(authUser.id).catch(() => null) : null;
 
   return Response.json({
-    users: persistedPresence ?? Array.from(presence.values()),
-    signals: persistedSignals ?? signals.filter((message) => message.id > after && (message.to === userId || message.to === "*")),
-    latestSignalId: persistedLatestSignalId ?? globalStore.gatherSignalSeq ?? 0,
+    users: Array.from(presence.values()),
+    signals: signals.filter((message) => message.id > after && (message.to === userId || message.to === "*")),
+    latestSignalId: globalStore.gatherSignalSeq ?? 0,
     chatMessages: persistedChatMessages ?? (channelId ? chatMessages.filter((message) => message.channelId === channelId && message.id > afterChat) : []),
     latestChatId: persistedLatestChatId ?? globalStore.gatherChatSeq ?? 0,
     savedPosition,
@@ -111,7 +103,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const authUser = await getRequestUser(request);
+  const authUser = getRequestJwtUser(request);
   if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
   const body = await request.json();
   prune();
@@ -127,24 +119,13 @@ export async function POST(request: Request) {
       updatedAt: Date.now(),
     };
     presence.set(user.id, user);
-    await savePresence(user).catch(() => null);
-    await saveEmployeePosition(authUser.id, body.user.position).catch(() => null);
+    void savePresence(user).catch(() => null);
+    void saveEmployeePosition(authUser.id, body.user.position).catch(() => null);
 
     return Response.json({ ok: true });
   }
 
   if (body.type === "signal") {
-    const persistedId = await createSignal({
-      from: authUser.id,
-      to: String(body.message.to),
-      meetingId: String(body.message.meetingId),
-      kind: body.message.kind,
-      payload: body.message.payload,
-    }).catch(() => null);
-    if (persistedId) {
-      return Response.json({ ok: true, id: persistedId });
-    }
-
     globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
     signals.push({
       id: globalStore.gatherSignalSeq,
@@ -155,6 +136,13 @@ export async function POST(request: Request) {
       payload: body.message.payload,
       createdAt: Date.now(),
     });
+    void createSignal({
+      from: authUser.id,
+      to: String(body.message.to),
+      meetingId: String(body.message.meetingId),
+      kind: body.message.kind,
+      payload: body.message.payload,
+    }).catch(() => null);
 
     return Response.json({ ok: true, id: globalStore.gatherSignalSeq });
   }
@@ -192,28 +180,25 @@ export async function POST(request: Request) {
   if (body.type === "leave") {
     const userId = authUser.id;
     presence.delete(userId);
-    await deletePresence(userId).catch(() => null);
-    const persistedId = await createSignal({
-      from: userId,
-      to: "*",
-      meetingId: "*",
-      kind: "leave",
-      payload: {},
-    }).catch(() => null);
-    if (persistedId) {
-      return Response.json({ ok: true });
-    }
+    void deletePresence(userId).catch(() => null);
 
     globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
     signals.push({
       id: globalStore.gatherSignalSeq,
-      from: String(body.userId),
+      from: userId,
       to: "*",
       meetingId: "*",
       kind: "leave",
       payload: {},
       createdAt: Date.now(),
     });
+    void createSignal({
+      from: userId,
+      to: "*",
+      meetingId: "*",
+      kind: "leave",
+      payload: {},
+    }).catch(() => null);
 
     return Response.json({ ok: true });
   }

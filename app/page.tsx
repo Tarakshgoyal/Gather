@@ -132,6 +132,9 @@ const ROWS = 33;
 const avatarStorageKey = (employeeId: string) => `gather.avatar.position:${employeeId}`;
 const SKINS = ["001", "004", "012", "028", "043", "053", "067", "072", "079"];
 const SIGNAL_URL = "/api/realtime";
+const RTC_CONFIGURATION: RTCConfiguration = {
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+};
 
 const meetingZones: MeetingZone[] = [
   { id: "left-meet", name: "Left Meeting Room", x: 8, y: 3, w: 7, h: 10 },
@@ -733,6 +736,10 @@ export default function Home() {
   }, []);
 
   const ensureLocalStream = useCallback(async () => {
+    if (!window.isSecureContext) {
+      setMediaError("Camera and microphone require HTTPS on another device. Use localhost on this machine or open the app through an HTTPS tunnel/deployment.");
+      return null;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setMediaError("This browser cannot access camera/mic media.");
       return null;
@@ -792,7 +799,7 @@ export default function Home() {
     const currentSession = sessionRef.current;
     if (existing || !currentSession) return existing;
 
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    const pc = new RTCPeerConnection(RTC_CONFIGURATION);
     peerConnectionsRef.current[remoteId] = pc;
     addMissingTracks(pc, localStreamRef.current);
 
@@ -896,7 +903,7 @@ export default function Home() {
     void syncPresence();
     const timer = window.setInterval(() => {
       if (!stopped) void syncPresence();
-    }, 1000);
+    }, 250);
     return () => {
       stopped = true;
       window.clearInterval(timer);
@@ -922,7 +929,7 @@ export default function Home() {
     void poll();
     const timer = window.setInterval(() => {
       if (!stopped) void poll();
-    }, 900);
+    }, 250);
     return () => {
       stopped = true;
       window.clearInterval(timer);
