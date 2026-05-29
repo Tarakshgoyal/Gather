@@ -1,0 +1,70 @@
+import { createCalendarEvent, createEventNotification, listCalendarEvents, startCalendarEvent } from "@/app/lib/db";
+
+export const dynamic = "force-dynamic";
+
+const fallbackEvents: never[] = [];
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const rangeStart = url.searchParams.get("start");
+  const rangeEnd = url.searchParams.get("end");
+  const roomId = url.searchParams.get("roomId");
+
+  if (!rangeStart || !rangeEnd) {
+    return Response.json({ error: "start and end are required" }, { status: 400 });
+  }
+
+  const events = await listCalendarEvents(rangeStart, rangeEnd, roomId === "all" ? null : roomId).catch(() => null);
+  return Response.json({ events: events ?? fallbackEvents });
+}
+
+export async function POST(request: Request) {
+  const body = await request.json();
+  const startAt = new Date(String(body.startAt));
+  const endAt = new Date(String(body.endAt));
+  const title = String(body.title ?? "").trim();
+  const roomId = String(body.roomId ?? "").trim();
+  const roomName = String(body.roomName ?? "").trim();
+  const creatorId = String(body.creatorId ?? "").trim();
+  const creatorName = String(body.creatorName ?? "").trim();
+
+  if (!title || !roomId || !roomName || !creatorId || !creatorName || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
+    return Response.json({ error: "Invalid calendar event" }, { status: 400 });
+  }
+
+  const event = await createCalendarEvent({
+    title: title.slice(0, 160),
+    description: String(body.description ?? "").trim().slice(0, 2000),
+    roomId,
+    roomName,
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+    creatorId,
+    creatorName,
+  }).catch(() => null);
+
+  if (!event) {
+    return Response.json({ error: "Calendar database is unavailable" }, { status: 503 });
+  }
+
+  await createEventNotification(event, "created").catch(() => null);
+  return Response.json({ event });
+}
+
+export async function PATCH(request: Request) {
+  const body = await request.json();
+  const eventId = Number(body.eventId);
+  const creatorId = String(body.creatorId ?? "").trim();
+
+  if (!Number.isInteger(eventId) || !creatorId) {
+    return Response.json({ error: "eventId and creatorId are required" }, { status: 400 });
+  }
+
+  const event = await startCalendarEvent(eventId, creatorId).catch(() => null);
+  if (!event) {
+    return Response.json({ error: "Only the meeting creator can start this meeting" }, { status: 403 });
+  }
+
+  await createEventNotification(event, "started").catch(() => null);
+  return Response.json({ event });
+}
