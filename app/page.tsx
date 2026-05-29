@@ -2033,6 +2033,7 @@ function CalendarWorkspace({
   joinMeeting: (event: CalendarEvent) => void;
   session: EmployeeSession | null;
 }) {
+  const [sidebarTab, setSidebarTab] = useState<"scheduled" | "notes">("scheduled");
   const today = new Date();
   const hours = Array.from({ length: 24 }, (_, index) => index);
   const weekEvents = events
@@ -2042,6 +2043,10 @@ function CalendarWorkspace({
   const recentEvents = weekEvents
     .filter((event) => new Date(event.startAt).getTime() <= today.getTime() || event.liveStartedAt)
     .slice(-8)
+    .reverse();
+  const noteEvents = weekEvents
+    .filter((event) => event.description.trim() || event.liveStartedAt || event.liveEndedAt)
+    .slice(-12)
     .reverse();
 
   return (
@@ -2059,22 +2064,40 @@ function CalendarWorkspace({
           <input placeholder="Search events" />
           <kbd>F</kbd>
         </label>
-        <div className="calendar-tabs"><button className="active">Scheduled</button><button>Meeting Notes</button></div>
+        <div className="calendar-tabs">
+          <button className={sidebarTab === "scheduled" ? "active" : ""} onClick={() => setSidebarTab("scheduled")} type="button">Scheduled</button>
+          <button className={sidebarTab === "notes" ? "active" : ""} onClick={() => setSidebarTab("notes")} type="button">Meeting Notes</button>
+        </div>
         <section className="calendar-agenda">
-          <span>Today</span>
-          {todayEvents.length ? todayEvents.map((event) => (
-            <article key={event.id} onClick={() => setSelectedEvent(event)}>
-              <strong>{event.title}</strong>
-              <small>{formatTimeRange(event.startAt, event.endAt)} · {event.roomName}</small>
-            </article>
-          )) : <p>No events scheduled.</p>}
-          <span>Recent</span>
-          {recentEvents.length ? recentEvents.map((event) => (
-            <article key={`recent-${event.id}`} onClick={() => setSelectedEvent(event)}>
-              <strong>{event.title}</strong>
-              <small>{formatEventDateTime(event.startAt)} · {formatTimeRange(event.startAt, event.endAt)} · {event.roomName}</small>
-            </article>
-          )) : <p>No recent meetings in this week.</p>}
+          {sidebarTab === "scheduled" ? (
+            <>
+              <span>Today</span>
+              {todayEvents.length ? todayEvents.map((event) => (
+                <article key={event.id} onClick={() => setSelectedEvent(event)}>
+                  <strong>{event.title}</strong>
+                  <small>{formatTimeRange(event.startAt, event.endAt)} · {event.roomName}</small>
+                </article>
+              )) : <p>No events scheduled.</p>}
+              <span>Recent</span>
+              {recentEvents.length ? recentEvents.map((event) => (
+                <article key={`recent-${event.id}`} onClick={() => setSelectedEvent(event)}>
+                  <strong>{event.title}</strong>
+                  <small>{formatEventDateTime(event.startAt)} · {formatTimeRange(event.startAt, event.endAt)} · {event.roomName}</small>
+                </article>
+              )) : <p>No recent meetings in this week.</p>}
+            </>
+          ) : (
+            <>
+              <span>Meeting Notes</span>
+              {noteEvents.length ? noteEvents.map((event) => (
+                <article className="meeting-note-card" key={`note-${event.id}`} onClick={() => setSelectedEvent(event)}>
+                  <strong>{event.title}</strong>
+                  <small>{formatEventDateTime(event.startAt)} · {event.roomName}</small>
+                  <p>{event.description.trim() || (event.liveEndedAt ? "Meeting ended. Add notes in the event description." : "Meeting started. Add agenda or notes in the event description.")}</p>
+                </article>
+              )) : <p>No meeting notes in this week.</p>}
+            </>
+          )}
         </section>
       </aside>
       <section className="calendar-main">
