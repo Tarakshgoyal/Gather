@@ -2851,6 +2851,63 @@ kbd {
   background: #ef4d58;
 }
 
+.calendar-detail-actions button:disabled {
+  cursor: not-allowed;
+  background: #c7ccd6;
+  color: #fff;
+  opacity: 0.72;
+}
+
+.calendar-mom-view {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(78, 81, 241, 0.18);
+  border-radius: 16px;
+  background: #f7f8ff;
+  padding: 14px;
+}
+
+.calendar-mom-view strong {
+  color: #20252d;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.calendar-mom-view p {
+  margin: 0;
+  color: #3e4652;
+  font-weight: 700;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.calendar-mom-editor {
+  display: grid;
+  gap: 8px;
+  color: #20252d;
+  font-weight: 900;
+}
+
+.calendar-mom-editor textarea {
+  min-height: 130px;
+  resize: vertical;
+  border: 1px solid #d9deea;
+  border-radius: 16px;
+  background: #fff;
+  color: #20252d;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.45;
+  outline: none;
+  padding: 12px 14px;
+}
+
+.calendar-mom-editor textarea:focus {
+  border-color: #4e51f1;
+  box-shadow: 0 0 0 4px rgba(78, 81, 241, 0.1);
+}
+
 .notifications-workspace {
   grid-column: 2 / 3;
   display: grid;

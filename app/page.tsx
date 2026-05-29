@@ -2,7 +2,7 @@
 
 import { CSSProperties, Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { Bell, Bot, Building2, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, PanelLeftClose, PanelLeftOpen, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
+import { Bell, Bot, Building2, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Lock, Map, MessageCircle, Mic, MicOff, Network, PanelLeftClose, PanelLeftOpen, Plus, RotateCw, Search, Send, Settings, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
@@ -78,6 +78,7 @@ type CalendarEvent = {
   officeId: string;
   title: string;
   description: string;
+  mom: string;
   roomId: string;
   roomName: string;
   startAt: string;
@@ -1116,12 +1117,17 @@ export default function Home() {
     window.setTimeout(() => setCalendarNotice(""), 2800);
   }, [activeOffice, session]);
 
-  const endCalendarMeeting = useCallback(async (event: CalendarEvent) => {
+  const endCalendarMeeting = useCallback(async (event: CalendarEvent, mom = "") => {
     if (!session || event.creatorId !== session.id) return;
+    if (!mom.trim()) {
+      setCalendarNotice("Add MOM before ending the meeting.");
+      window.setTimeout(() => setCalendarNotice(""), 2800);
+      return;
+    }
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id, mom }),
     }).catch(() => null);
     if (!response?.ok) return;
     const data = await response.json() as { event: CalendarEvent };
@@ -1166,7 +1172,7 @@ export default function Home() {
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id, mom: event.mom || "Meeting ended from the room assistant." }),
     }).catch(() => null);
 
     if (!response?.ok) {
@@ -1452,10 +1458,6 @@ export default function Home() {
                   </button>
                   <button aria-label="Camera options" className="control-menu" title="Camera options" type="button"><ChevronUp size={13} /></button>
                 </div>
-                <button aria-label="React with emoji" className="control icon-control" title="React with emoji" type="button"><Smile size={19} /></button>
-                <button aria-label="Raise hand" className="control icon-control" title="Raise hand" type="button"><Hand size={19} /></button>
-                <span className="control-divider" />
-                <button aria-label="Share screen" className="control icon-control" title="Share screen" type="button"><ScreenShare size={19} /></button>
               </div>
               <div className="map-overlay coordinates"><span>x {avatar.x}, y {avatar.y}</span><span>Press G for ghost</span></div>
               <MeetingPanel activeMeeting={activeMeeting} cameraOff={cameraOff} liveKitConnection={liveKitConnection?.roomName === activeMeeting?.id ? liveKitConnection : null} mediaError={mediaError} muted={muted} />
@@ -2029,7 +2031,7 @@ function CalendarWorkspace({
   setDraft: (draft: CalendarDraft) => void;
   createMeeting: () => void;
   startMeeting: (event: CalendarEvent) => void;
-  endMeeting: (event: CalendarEvent) => void;
+  endMeeting: (event: CalendarEvent, mom: string) => void;
   joinMeeting: (event: CalendarEvent) => void;
   session: EmployeeSession | null;
 }) {
@@ -2045,7 +2047,7 @@ function CalendarWorkspace({
     .slice(-8)
     .reverse();
   const noteEvents = weekEvents
-    .filter((event) => event.description.trim() || event.liveStartedAt || event.liveEndedAt)
+    .filter((event) => event.liveEndedAt && event.mom.trim())
     .slice(-12)
     .reverse();
 
@@ -2093,7 +2095,7 @@ function CalendarWorkspace({
                 <article className="meeting-note-card" key={`note-${event.id}`} onClick={() => setSelectedEvent(event)}>
                   <strong>{event.title}</strong>
                   <small>{formatEventDateTime(event.startAt)} · {event.roomName}</small>
-                  <p>{event.description.trim() || (event.liveEndedAt ? "Meeting ended. Add notes in the event description." : "Meeting started. Add agenda or notes in the event description.")}</p>
+                  <p>{event.mom}</p>
                 </article>
               )) : <p>No meeting notes in this week.</p>}
             </>
@@ -2157,28 +2159,75 @@ function CalendarWorkspace({
           </div>
         ) : null}
         {selectedEvent ? (
-          <div className="calendar-modal-backdrop">
-            <section className="calendar-modal calendar-detail-modal">
-              <header><h2>{selectedEvent.title}</h2><button type="button" onClick={() => setSelectedEvent(null)}>Close</button></header>
-              {notice ? <p className="calendar-flash">{notice}</p> : null}
-              <dl className="calendar-detail-list">
-                <div><dt>Room</dt><dd>{selectedEvent.roomName}</dd></div>
-                <div><dt>Time</dt><dd>{formatTimeRange(selectedEvent.startAt, selectedEvent.endAt)}</dd></div>
-                <div><dt>Date</dt><dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(new Date(selectedEvent.startAt))}</dd></div>
-                <div><dt>Created by</dt><dd>{selectedEvent.creatorName}</dd></div>
-                <div><dt>Status</dt><dd>{selectedEvent.liveEndedAt ? "Ended" : selectedEvent.liveStartedAt ? "Started" : "Not started"}</dd></div>
-              </dl>
-              {selectedEvent.description ? <p className="calendar-detail-description">{selectedEvent.description}</p> : null}
-              <div className="calendar-detail-actions">
-                {session?.id === selectedEvent.creatorId && !selectedEvent.liveStartedAt && !selectedEvent.liveEndedAt ? <button type="button" onClick={() => startMeeting(selectedEvent)}><Video size={18} /> Start meeting</button> : null}
-                {session?.id === selectedEvent.creatorId && selectedEvent.liveStartedAt && !selectedEvent.liveEndedAt ? <button className="calendar-end-button" type="button" onClick={() => endMeeting(selectedEvent)}>End meeting</button> : null}
-                {!selectedEvent.liveEndedAt ? <button type="button" onClick={() => joinMeeting(selectedEvent)}>Join meeting</button> : null}
-              </div>
-            </section>
-          </div>
+          <CalendarDetailModal
+            key={selectedEvent.id}
+            event={selectedEvent}
+            joinMeeting={joinMeeting}
+            notice={notice}
+            onClose={() => setSelectedEvent(null)}
+            endMeeting={endMeeting}
+            session={session}
+            startMeeting={startMeeting}
+          />
         ) : null}
       </section>
     </section>
+  );
+}
+
+function CalendarDetailModal({
+  event,
+  endMeeting,
+  joinMeeting,
+  notice,
+  onClose,
+  session,
+  startMeeting,
+}: {
+  event: CalendarEvent;
+  endMeeting: (event: CalendarEvent, mom: string) => void;
+  joinMeeting: (event: CalendarEvent) => void;
+  notice: string;
+  onClose: () => void;
+  session: EmployeeSession | null;
+  startMeeting: (event: CalendarEvent) => void;
+}) {
+  const [momDraft, setMomDraft] = useState(event.mom);
+  const isCreator = session?.id === event.creatorId;
+  const canWriteMom = isCreator && event.liveStartedAt && !event.liveEndedAt;
+
+  return (
+    <div className="calendar-modal-backdrop">
+      <section className="calendar-modal calendar-detail-modal">
+        <header><h2>{event.title}</h2><button type="button" onClick={onClose}>Close</button></header>
+        {notice ? <p className="calendar-flash">{notice}</p> : null}
+        <dl className="calendar-detail-list">
+          <div><dt>Room</dt><dd>{event.roomName}</dd></div>
+          <div><dt>Time</dt><dd>{formatTimeRange(event.startAt, event.endAt)}</dd></div>
+          <div><dt>Date</dt><dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(new Date(event.startAt))}</dd></div>
+          <div><dt>Created by</dt><dd>{event.creatorName}</dd></div>
+          <div><dt>Status</dt><dd>{event.liveEndedAt ? "Ended" : event.liveStartedAt ? "Started" : "Not started"}</dd></div>
+        </dl>
+        {event.description ? <p className="calendar-detail-description">{event.description}</p> : null}
+        {event.liveEndedAt && event.mom ? (
+          <section className="calendar-mom-view">
+            <strong>MOM</strong>
+            <p>{event.mom}</p>
+          </section>
+        ) : null}
+        {canWriteMom ? (
+          <label className="calendar-mom-editor">
+            MOM
+            <textarea value={momDraft} onChange={(changeEvent) => setMomDraft(changeEvent.target.value)} placeholder="Write minutes of meeting, decisions, owners, and next steps before ending." />
+          </label>
+        ) : null}
+        <div className="calendar-detail-actions">
+          {isCreator && !event.liveStartedAt && !event.liveEndedAt ? <button type="button" onClick={() => startMeeting(event)}><Video size={18} /> Start meeting</button> : null}
+          {canWriteMom ? <button className="calendar-end-button" disabled={!momDraft.trim()} type="button" onClick={() => endMeeting(event, momDraft)}>End meeting</button> : null}
+          {!event.liveEndedAt ? <button type="button" onClick={() => joinMeeting(event)}>Join meeting</button> : null}
+        </div>
+      </section>
+    </div>
   );
 }
 

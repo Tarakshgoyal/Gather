@@ -69,7 +69,8 @@ export async function PATCH(request: Request) {
   }
 
   if (action === "end") {
-    const event = await endCalendarEvent(eventId, user.id, officeId).catch(() => null);
+    const mom = String(body.mom ?? "").trim();
+    const event = await endCalendarEvent(eventId, user.id, officeId, mom).catch(() => null);
     if (!event) {
       return Response.json({ error: "Only the meeting creator can end a started meeting" }, { status: 403 });
     }

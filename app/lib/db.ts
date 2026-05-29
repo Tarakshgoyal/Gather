@@ -43,6 +43,7 @@ export type StoredCalendarEvent = {
   officeId: string;
   title: string;
   description: string;
+  mom: string;
   roomId: string;
   roomName: string;
   startAt: string;
@@ -176,6 +177,7 @@ export async function ensureDatabase() {
       office_id TEXT NOT NULL DEFAULT 'default',
       title TEXT NOT NULL CHECK (char_length(title) > 0 AND char_length(title) <= 160),
       description TEXT NOT NULL DEFAULT '',
+      mom TEXT NOT NULL DEFAULT '',
       room_id TEXT NOT NULL,
       room_name TEXT NOT NULL,
       start_at TIMESTAMPTZ NOT NULL,
@@ -193,6 +195,9 @@ export async function ensureDatabase() {
 
     ALTER TABLE calendar_events
       ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
+    ALTER TABLE calendar_events
+      ADD COLUMN IF NOT EXISTS mom TEXT NOT NULL DEFAULT '';
 
     CREATE INDEX IF NOT EXISTS calendar_events_start_at_idx ON calendar_events (start_at);
     CREATE INDEX IF NOT EXISTS calendar_events_room_id_start_at_idx ON calendar_events (room_id, start_at);
@@ -544,6 +549,7 @@ function mapCalendarRow(row: {
   office_id?: string;
   title: string;
   description: string;
+  mom?: string;
   room_id: string;
   room_name: string;
   start_at: Date;
@@ -559,6 +565,7 @@ function mapCalendarRow(row: {
     officeId: row.office_id ?? DEFAULT_OFFICE_ID,
     title: row.title,
     description: row.description,
+    mom: row.mom ?? "",
     roomId: row.room_id,
     roomName: row.room_name,
     startAt: row.start_at.toISOString(),
@@ -582,6 +589,7 @@ export async function listCalendarEvents(rangeStart: string, rangeEnd: string, r
     office_id: string;
     title: string;
     description: string;
+    mom: string;
     room_id: string;
     room_name: string;
     start_at: Date;
@@ -592,7 +600,7 @@ export async function listCalendarEvents(rangeStart: string, rangeEnd: string, r
     live_ended_at: Date | null;
     created_at: Date;
   }>(
-    `SELECT id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
+    `SELECT id, office_id, title, description, mom, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
        FROM calendar_events
       WHERE office_id = $1
         AND start_at < $3::timestamptz
@@ -605,7 +613,7 @@ export async function listCalendarEvents(rangeStart: string, rangeEnd: string, r
   return result.rows.map(mapCalendarRow);
 }
 
-export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" | "createdAt" | "liveStartedAt" | "liveEndedAt">) {
+export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" | "createdAt" | "liveStartedAt" | "liveEndedAt" | "mom">) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
@@ -615,6 +623,7 @@ export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" 
     office_id: string;
     title: string;
     description: string;
+    mom: string;
     room_id: string;
     room_name: string;
     start_at: Date;
@@ -627,7 +636,7 @@ export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" 
   }>(
     `INSERT INTO calendar_events (office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name)
      VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8, $9)
-     RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+     RETURNING id, office_id, title, description, mom, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
     [event.officeId, event.title, event.description, event.roomId, event.roomName, event.startAt, event.endAt, event.creatorId, event.creatorName],
   );
 
@@ -644,6 +653,7 @@ export async function startCalendarEvent(eventId: number, creatorId: string, off
     office_id: string;
     title: string;
     description: string;
+    mom: string;
     room_id: string;
     room_name: string;
     start_at: Date;
@@ -660,14 +670,14 @@ export async function startCalendarEvent(eventId: number, creatorId: string, off
       WHERE id = $1 AND creator_id = $2
         AND office_id = $3
         AND live_ended_at IS NULL
-      RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+      RETURNING id, office_id, title, description, mom, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
     [eventId, creatorId, officeId],
   );
 
   return result.rows[0] ? mapCalendarRow(result.rows[0]) : null;
 }
 
-export async function endCalendarEvent(eventId: number, creatorId: string, officeId = DEFAULT_OFFICE_ID) {
+export async function endCalendarEvent(eventId: number, creatorId: string, officeId = DEFAULT_OFFICE_ID, mom = "") {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
@@ -677,6 +687,7 @@ export async function endCalendarEvent(eventId: number, creatorId: string, offic
     office_id: string;
     title: string;
     description: string;
+    mom: string;
     room_id: string;
     room_name: string;
     start_at: Date;
@@ -688,13 +699,14 @@ export async function endCalendarEvent(eventId: number, creatorId: string, offic
     created_at: Date;
   }>(
     `UPDATE calendar_events
-        SET live_ended_at = COALESCE(live_ended_at, now())
+        SET live_ended_at = COALESCE(live_ended_at, now()),
+            mom = CASE WHEN char_length($4) > 0 THEN $4 ELSE mom END
       WHERE id = $1
         AND creator_id = $2
         AND office_id = $3
         AND live_started_at IS NOT NULL
-      RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
-    [eventId, creatorId, officeId],
+      RETURNING id, office_id, title, description, mom, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+    [eventId, creatorId, officeId, mom.slice(0, 4000)],
   );
 
   return result.rows[0] ? mapCalendarRow(result.rows[0]) : null;
@@ -787,7 +799,7 @@ export async function generateDueNotifications(officeId = DEFAULT_OFFICE_ID) {
     live_ended_at: Date | null;
     created_at: Date;
   }>(
-    `SELECT id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
+    `SELECT id, office_id, title, description, mom, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
        FROM calendar_events
       WHERE office_id = $1
         AND start_at > now()
