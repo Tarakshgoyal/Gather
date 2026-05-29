@@ -2,7 +2,7 @@
 
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { AtSign, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, CircleEllipsis, Clock3, Edit3, Gift, Hash, Lock, Map, MessageCircle, Network, Plus, RotateCw, Search, Send, Settings, Video, X } from "lucide-react";
+import { AtSign, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, Clock3, Edit3, Gift, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
@@ -1205,9 +1205,22 @@ export default function Home() {
               <div className="map-overlay mini-map"><span className="mini-room mini-one" /><span className="mini-room mini-two" /><span className="mini-room mini-three" /><span className="mini-you" style={{ left: `${(avatar.x / COLS) * 100}%`, top: `${(avatar.y / ROWS) * 100}%` }} /></div>
               <div className="map-overlay bottom-controls">
                 <div className="self-chip"><span className="avatar-head">{displayName[0]}</span><span className="presence-dot" /></div>
-                <button className={muted ? "control danger" : "control"} onClick={() => setMuted((current) => !current)}>Mic</button>
-                <button className={cameraOff ? "control danger" : "control"} onClick={() => setCameraOff((current) => !current)}>Cam</button>
-                <button className="control">Smile</button><button className="control">Wave</button><button className="control">Share</button>
+                <div className="control-group">
+                  <button aria-label={muted ? "Turn microphone on" : "Mute microphone"} className={muted ? "control media-control danger" : "control media-control"} onClick={() => setMuted((current) => !current)} title={muted ? "Turn microphone on" : "Mute microphone"} type="button">
+                    {muted ? <MicOff size={19} /> : <Mic size={19} />}
+                  </button>
+                  <button aria-label="Microphone options" className="control-menu" title="Microphone options" type="button"><ChevronUp size={13} /></button>
+                </div>
+                <div className="control-group">
+                  <button aria-label={cameraOff ? "Turn camera on" : "Turn camera off"} className={cameraOff ? "control media-control danger" : "control media-control"} onClick={() => setCameraOff((current) => !current)} title={cameraOff ? "Turn camera on" : "Turn camera off"} type="button">
+                    {cameraOff ? <VideoOff size={20} /> : <Video size={20} />}
+                  </button>
+                  <button aria-label="Camera options" className="control-menu" title="Camera options" type="button"><ChevronUp size={13} /></button>
+                </div>
+                <button aria-label="React with emoji" className="control icon-control" title="React with emoji" type="button"><Smile size={19} /></button>
+                <button aria-label="Raise hand" className="control icon-control" title="Raise hand" type="button"><Hand size={19} /></button>
+                <span className="control-divider" />
+                <button aria-label="Share screen" className="control icon-control" title="Share screen" type="button"><ScreenShare size={19} /></button>
               </div>
               <div className="map-overlay coordinates"><span>x {avatar.x}, y {avatar.y}</span><span>Press G for ghost</span></div>
               <MeetingPanel activeMeeting={activeMeeting} cameraOff={cameraOff} liveKitConnection={liveKitConnection?.roomName === activeMeeting?.id ? liveKitConnection : null} mediaError={mediaError} muted={muted} />

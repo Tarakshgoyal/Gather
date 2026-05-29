@@ -1770,49 +1770,116 @@ kbd {
 
 .bottom-controls {
   left: 50%;
-  bottom: 22px;
+  bottom: 18px;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   transform: translateX(-50%);
-  border-radius: 20px;
-  background: rgba(36, 36, 36, 0.9);
-  padding: 9px 10px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background: rgba(37, 37, 37, 0.95);
+  padding: 8px 10px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
 }
 
 .self-chip {
   position: relative;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(81, 233, 216, 0.22), rgba(41, 48, 51, 0.18));
 }
 
 .self-chip .avatar-head {
-  width: 47px;
-  height: 47px;
-  border: 4px solid #50e6d3;
+  width: 46px;
+  height: 46px;
+  border: 4px solid #58eadb;
+  box-shadow: 0 0 0 2px rgba(88, 234, 219, 0.15), inset 0 -8px 0 rgba(0, 0, 0, 0.08);
 }
 
 .presence-dot {
   position: absolute;
-  right: 2px;
-  bottom: 1px;
-  width: 11px;
-  height: 11px;
+  right: 5px;
+  bottom: 5px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #2c2c2c;
 }
 
 .control {
-  min-width: 56px;
-  height: 44px;
+  width: 46px;
+  min-width: 46px;
+  height: 46px;
   border-radius: 14px;
-  background: #3d3d3d;
-  color: #f7f7f7;
-  padding: 0 12px;
-  font-size: 13px;
-  font-weight: 900;
+  background: #343434;
+  color: #f3f4f6;
+  padding: 0;
+  transition: background 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+.control:hover,
+.control-menu:hover {
+  background: #424242;
+  transform: translateY(-1px);
+}
+
+.control:active,
+.control-menu:active {
+  transform: translateY(0);
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #343434;
+}
+
+.control-group .control {
+  border-radius: 14px 0 0 14px;
+  background: transparent;
+}
+
+.control-menu {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 46px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0 14px 14px 0;
+  background: transparent;
+  color: #d7d9de;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.media-control.danger svg {
+  stroke: #ff6f6f;
+}
+
+.media-control:not(.danger) svg {
+  stroke: #f5f7fa;
+}
+
+.icon-control svg {
+  stroke: #eff1f4;
+}
+
+.control-divider {
+  width: 1px;
+  height: 34px;
+  margin: 0 2px;
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .control.danger {
-  color: #ff8b8b;
-  text-decoration: line-through;
+  color: #ff8585;
+  background: rgba(89, 51, 51, 0.45);
 }
 
 .coordinates {
