@@ -394,6 +394,7 @@ export default function Home() {
   const [chatDraft, setChatDraft] = useState("");
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
   const [leftDrawerHidden, setLeftDrawerHidden] = useState(false);
+  const [cameraOffset, setCameraOffset] = useState({ x: 0, y: 0 });
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarRoomId, setCalendarRoomId] = useState("all");
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -603,25 +604,39 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [avatar, moveTo]);
 
-  useEffect(() => {
-    const camera = cameraRef.current;
-    if (!camera) return;
-    camera.scrollLeft = 180;
-    camera.scrollTop = 0;
-  }, []);
-
   const scrollCameraToPoint = useCallback((point: Point) => {
     const camera = cameraRef.current;
     if (!camera) return;
 
+    const mapWidth = COLS * TILE;
+    const mapHeight = ROWS * TILE;
     const targetLeft = point.x * TILE - camera.clientWidth / 2 + TILE / 2;
     const targetTop = point.y * TILE - camera.clientHeight / 2 + TILE / 2;
-    camera.scrollTo({
-      left: Math.max(0, targetLeft),
-      top: Math.max(0, targetTop),
-      behavior: "smooth",
+    const maxLeft = Math.max(0, mapWidth - camera.clientWidth);
+    const maxTop = Math.max(0, mapHeight - camera.clientHeight);
+    const left = Math.min(Math.max(0, targetLeft), maxLeft);
+    const top = Math.min(Math.max(0, targetTop), maxTop);
+
+    setCameraOffset({
+      x: -left,
+      y: -top,
     });
   }, []);
+
+  useEffect(() => {
+    if (activeTool !== "map" && activeTool !== "gather") return;
+    const animation = window.requestAnimationFrame(() => scrollCameraToPoint(avatar));
+    return () => window.cancelAnimationFrame(animation);
+  }, [activeTool, avatar, leftDrawerHidden, scrollCameraToPoint]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const observer = new ResizeObserver(() => scrollCameraToPoint(avatar));
+    observer.observe(camera);
+    return () => observer.disconnect();
+  }, [avatar, scrollCameraToPoint]);
 
   const showOfficeMap = useCallback(() => {
     setActiveTool("map");
@@ -1227,7 +1242,7 @@ export default function Home() {
 
             <section className="world-viewport" aria-label="Office game world">
               <div className="office-camera" ref={cameraRef}>
-                <div className="office-map" style={{ width: COLS * TILE, height: ROWS * TILE }}>
+                <div className="office-map" style={{ width: COLS * TILE, height: ROWS * TILE, transform: `translate3d(${cameraOffset.x}px, ${cameraOffset.y}px, 0)` }}>
                   {Array.from({ length: ROWS * COLS }, (_, index) => {
                     const x = index % COLS;
                     const y = Math.floor(index / COLS);
