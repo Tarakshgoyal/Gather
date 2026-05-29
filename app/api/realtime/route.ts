@@ -15,6 +15,7 @@ import {
   saveEmployeePosition,
   savePresence,
 } from "@/app/lib/db";
+import { getRequestUser } from "@/app/lib/request-auth";
 
 type Point = {
   x: number;
@@ -82,10 +83,12 @@ function prune() {
 }
 
 export async function GET(request: Request) {
+  const authUser = await getRequestUser(request);
+  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
   prune();
   await pruneRealtimeState().catch(() => null);
   const url = new URL(request.url);
-  const userId = url.searchParams.get("userId") ?? "";
+  const userId = authUser.id;
   const after = Number(url.searchParams.get("after") ?? "0");
   const channelId = url.searchParams.get("channelId");
   const afterChat = Number(url.searchParams.get("afterChat") ?? "0");
@@ -95,7 +98,7 @@ export async function GET(request: Request) {
   const persistedPresence = await listPresence().catch(() => null);
   const persistedSignals = await listSignals(userId, after).catch(() => null);
   const persistedLatestSignalId = await latestSignalId().catch(() => null);
-  const savedPosition = positionFor ? await getEmployeePosition(positionFor).catch(() => null) : null;
+  const savedPosition = positionFor === authUser.id ? await getEmployeePosition(authUser.id).catch(() => null) : null;
 
   return Response.json({
     users: persistedPresence ?? Array.from(presence.values()),
@@ -108,14 +111,16 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authUser = await getRequestUser(request);
+  if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401 });
   const body = await request.json();
   prune();
 
   if (body.type === "presence") {
     const user = {
-      id: String(body.user.id),
-      name: String(body.user.name),
-      skin: String(body.user.skin),
+      id: authUser.id,
+      name: authUser.name,
+      skin: authUser.skin,
       position: body.user.position,
       status: String(body.user.status),
       meetingId: body.user.meetingId ? String(body.user.meetingId) : null,
@@ -123,14 +128,14 @@ export async function POST(request: Request) {
     };
     presence.set(user.id, user);
     await savePresence(user).catch(() => null);
-    await saveEmployeePosition(String(body.user.id), body.user.position).catch(() => null);
+    await saveEmployeePosition(authUser.id, body.user.position).catch(() => null);
 
     return Response.json({ ok: true });
   }
 
   if (body.type === "signal") {
     const persistedId = await createSignal({
-      from: String(body.message.from),
+      from: authUser.id,
       to: String(body.message.to),
       meetingId: String(body.message.meetingId),
       kind: body.message.kind,
@@ -143,7 +148,7 @@ export async function POST(request: Request) {
     globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
     signals.push({
       id: globalStore.gatherSignalSeq,
-      from: String(body.message.from),
+      from: authUser.id,
       to: String(body.message.to),
       meetingId: String(body.message.meetingId),
       kind: body.message.kind,
@@ -162,8 +167,8 @@ export async function POST(request: Request) {
 
     const persistedMessage = await createChatMessage({
       channelId: String(body.message.channelId),
-      fromId: String(body.message.fromId),
-      fromName: String(body.message.fromName),
+      fromId: authUser.id,
+      fromName: authUser.name,
       body: text.slice(0, 2000),
     }).catch(() => null);
     if (persistedMessage) {
@@ -174,8 +179,8 @@ export async function POST(request: Request) {
     const message = {
       id: globalStore.gatherChatSeq,
       channelId: String(body.message.channelId),
-      fromId: String(body.message.fromId),
-      fromName: String(body.message.fromName),
+      fromId: authUser.id,
+      fromName: authUser.name,
       body: text.slice(0, 2000),
       createdAt: Date.now(),
     };
@@ -185,7 +190,7 @@ export async function POST(request: Request) {
   }
 
   if (body.type === "leave") {
-    const userId = String(body.userId);
+    const userId = authUser.id;
     presence.delete(userId);
     await deletePresence(userId).catch(() => null);
     const persistedId = await createSignal({

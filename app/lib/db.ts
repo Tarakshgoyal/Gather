@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import type { AuthUser } from "./auth";
 
 const globalStore = globalThis as typeof globalThis & {
   gatherPgPool?: Pool;
@@ -59,6 +60,10 @@ export type StoredNotification = {
   eventStartAt: string;
   createdAt: string;
   readAt: string | null;
+};
+
+export type StoredAuthUser = AuthUser & {
+  passwordHash: string;
 };
 
 export function getPool() {
@@ -168,6 +173,28 @@ export async function ensureDatabase() {
 
     CREATE INDEX IF NOT EXISTS notifications_created_at_idx ON notifications (created_at DESC);
     CREATE INDEX IF NOT EXISTS notifications_read_at_created_at_idx ON notifications (read_at, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS auth_users (
+      id UUID PRIMARY KEY,
+      name TEXT NOT NULL CHECK (char_length(name) > 0 AND char_length(name) <= 80),
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      skin TEXT NOT NULL,
+      email_verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS email_verification_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS email_verification_tokens_user_id_idx
+      ON email_verification_tokens (user_id);
   `).then(() => undefined);
 
   await globalStore.gatherDbReady;
@@ -739,4 +766,157 @@ export async function markNotificationRead(notificationId: number) {
   );
 
   return result.rows[0] ? mapNotificationRow(result.rows[0]) : null;
+}
+
+function mapAuthUser(row: {
+  id: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  skin: string;
+  email_verified_at: Date | null;
+}) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    skin: row.skin,
+    emailVerified: Boolean(row.email_verified_at),
+    passwordHash: row.password_hash,
+  } satisfies StoredAuthUser;
+}
+
+export async function findAuthUserByEmail(email: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+  const result = await pool.query<{
+    id: string;
+    name: string;
+    email: string;
+    password_hash: string;
+    skin: string;
+    email_verified_at: Date | null;
+  }>(
+    `SELECT id, name, email, password_hash, skin, email_verified_at
+       FROM auth_users
+      WHERE email = $1`,
+    [email.toLowerCase()],
+  );
+  return result.rows[0] ? mapAuthUser(result.rows[0]) : null;
+}
+
+export async function findAuthUserById(id: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+  const result = await pool.query<{
+    id: string;
+    name: string;
+    email: string;
+    password_hash: string;
+    skin: string;
+    email_verified_at: Date | null;
+  }>(
+    `SELECT id, name, email, password_hash, skin, email_verified_at
+       FROM auth_users
+      WHERE id = $1`,
+    [id],
+  );
+  return result.rows[0] ? mapAuthUser(result.rows[0]) : null;
+}
+
+export async function upsertUnverifiedAuthUser(user: {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  skin: string;
+}) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+  const result = await pool.query<{
+    id: string;
+    name: string;
+    email: string;
+    password_hash: string;
+    skin: string;
+    email_verified_at: Date | null;
+  }>(
+    `INSERT INTO auth_users (id, name, email, password_hash, skin)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (email)
+     DO UPDATE SET
+       name = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.name ELSE auth_users.name END,
+       password_hash = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.password_hash ELSE auth_users.password_hash END,
+       skin = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.skin ELSE auth_users.skin END,
+       updated_at = now()
+     RETURNING id, name, email, password_hash, skin, email_verified_at`,
+    [user.id, user.name, user.email.toLowerCase(), user.passwordHash, user.skin],
+  );
+  return result.rows[0] ? mapAuthUser(result.rows[0]) : null;
+}
+
+export async function createEmailVerificationToken(userId: string, tokenHash: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+  await pool.query(
+    `DELETE FROM email_verification_tokens
+      WHERE user_id = $1 OR expires_at < now() OR used_at IS NOT NULL`,
+    [userId],
+  );
+  await pool.query(
+    `INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
+     VALUES ($1, $2, now() + interval '30 minutes')`,
+    [tokenHash, userId],
+  );
+  return true;
+}
+
+export async function verifyEmailToken(tokenHash: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const tokenResult = await client.query<{ user_id: string }>(
+      `UPDATE email_verification_tokens
+          SET used_at = now()
+        WHERE token_hash = $1
+          AND used_at IS NULL
+          AND expires_at > now()
+        RETURNING user_id`,
+      [tokenHash],
+    );
+    const userId = tokenResult.rows[0]?.user_id;
+    if (!userId) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    const userResult = await client.query<{
+      id: string;
+      name: string;
+      email: string;
+      password_hash: string;
+      skin: string;
+      email_verified_at: Date | null;
+    }>(
+      `UPDATE auth_users
+          SET email_verified_at = COALESCE(email_verified_at, now()),
+              updated_at = now()
+        WHERE id = $1
+        RETURNING id, name, email, password_hash, skin, email_verified_at`,
+      [userId],
+    );
+    await client.query("COMMIT");
+    return userResult.rows[0] ? mapAuthUser(userResult.rows[0]) : null;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
 }

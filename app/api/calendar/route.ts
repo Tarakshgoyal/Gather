@@ -1,4 +1,5 @@
 import { createCalendarEvent, createEventNotification, endCalendarEvent, listCalendarEvents, startCalendarEvent } from "@/app/lib/db";
+import { getRequestUser } from "@/app/lib/request-auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,16 +21,16 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const user = await getRequestUser(request);
+  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
   const body = await request.json();
   const startAt = new Date(String(body.startAt));
   const endAt = new Date(String(body.endAt));
   const title = String(body.title ?? "").trim();
   const roomId = String(body.roomId ?? "").trim();
   const roomName = String(body.roomName ?? "").trim();
-  const creatorId = String(body.creatorId ?? "").trim();
-  const creatorName = String(body.creatorName ?? "").trim();
 
-  if (!title || !roomId || !roomName || !creatorId || !creatorName || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
+  if (!title || !roomId || !roomName || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
     return Response.json({ error: "Invalid calendar event" }, { status: 400 });
   }
 
@@ -40,8 +41,8 @@ export async function POST(request: Request) {
     roomName,
     startAt: startAt.toISOString(),
     endAt: endAt.toISOString(),
-    creatorId,
-    creatorName,
+    creatorId: user.id,
+    creatorName: user.name,
   }).catch(() => null);
 
   if (!event) {
@@ -53,24 +54,25 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const user = await getRequestUser(request);
+  if (!user) return Response.json({ error: "Authentication required" }, { status: 401 });
   const body = await request.json();
   const eventId = Number(body.eventId);
-  const creatorId = String(body.creatorId ?? "").trim();
   const action = String(body.action ?? "start");
 
-  if (!Number.isInteger(eventId) || !creatorId) {
-    return Response.json({ error: "eventId and creatorId are required" }, { status: 400 });
+  if (!Number.isInteger(eventId)) {
+    return Response.json({ error: "eventId is required" }, { status: 400 });
   }
 
   if (action === "end") {
-    const event = await endCalendarEvent(eventId, creatorId).catch(() => null);
+    const event = await endCalendarEvent(eventId, user.id).catch(() => null);
     if (!event) {
       return Response.json({ error: "Only the meeting creator can end a started meeting" }, { status: 403 });
     }
     return Response.json({ event });
   }
 
-  const event = await startCalendarEvent(eventId, creatorId).catch(() => null);
+  const event = await startCalendarEvent(eventId, user.id).catch(() => null);
   if (!event) {
     return Response.json({ error: "Only the meeting creator can start this meeting" }, { status: 403 });
   }

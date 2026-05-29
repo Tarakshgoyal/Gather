@@ -120,6 +120,30 @@ button {
   padding: 13px 14px;
 }
 
+.auth-form button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.auth-status {
+  margin: 2px 0 0 !important;
+  border: 1px solid #d9e2ff;
+  border-radius: 12px;
+  background: #f3f6ff;
+  padding: 10px 12px;
+  color: #4350c8 !important;
+  font-size: 13px !important;
+}
+
+.auth-switch {
+  width: 100%;
+  margin-top: 12px;
+  border: 0;
+  background: transparent;
+  color: #4e55ec;
+  font-weight: 1000;
+}
+
 .signout-button {
   flex: none;
   padding: 6px 9px;

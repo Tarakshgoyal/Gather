@@ -34,6 +34,7 @@ type Person = {
 type EmployeeSession = {
   id: string;
   name: string;
+  email: string;
   skin: string;
 };
 type ActiveMeeting = {
@@ -128,7 +129,6 @@ type OfficeObject = {
 const TILE = 32;
 const COLS = 58;
 const ROWS = 33;
-const EMPLOYEE_STORAGE_KEY = "gather.employee.session";
 const avatarStorageKey = (employeeId: string) => `gather.avatar.position:${employeeId}`;
 const SKINS = ["001", "004", "012", "028", "043", "053", "067", "072", "079"];
 const SIGNAL_URL = "/api/realtime";
@@ -366,7 +366,11 @@ function nearestOpenTile(point: Point) {
 
 export default function Home() {
   const [session, setSession] = useState<EmployeeSession | null>(null);
-  const [authName, setAuthName] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("register");
+  const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [authStatus, setAuthStatus] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const [avatar, setAvatar] = useState<Point>(() => {
     if (typeof window === "undefined" || !session) return { x: 25, y: 19 };
     const saved = window.localStorage.getItem(avatarStorageKey(session.id));
@@ -418,19 +422,24 @@ export default function Home() {
   }, [session]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(EMPLOYEE_STORAGE_KEY);
-    if (!saved) return;
-    let timer: number | null = null;
-    try {
-      const parsed = JSON.parse(saved) as EmployeeSession;
-      if (parsed.id && parsed.name && parsed.skin) {
-        timer = window.setTimeout(() => setSession(parsed), 0);
+    let stopped = false;
+    const params = new URLSearchParams(window.location.search);
+    const authResult = params.get("auth");
+    if (authResult) window.history.replaceState(null, "", window.location.pathname);
+    async function loadSession() {
+      const response = await fetch("/api/auth/session").catch(() => null);
+      if (stopped) return;
+      if (authResult === "verified") setAuthStatus("Email verified. Entering the office...");
+      if (authResult === "invalid-verification") setAuthStatus("That verification link is invalid or expired. Register again to get a fresh link.");
+      if (response?.ok) {
+        const data = await response.json() as { user: EmployeeSession | null };
+        if (data.user) setSession(data.user);
       }
-    } catch {
-      window.localStorage.removeItem(EMPLOYEE_STORAGE_KEY);
+      setAuthChecked(true);
     }
+    void loadSession();
     return () => {
-      if (timer) window.clearTimeout(timer);
+      stopped = true;
     };
   }, []);
 
@@ -467,26 +476,53 @@ export default function Home() {
 
   const displayName = session?.name ?? "Guest";
 
-  const signIn = useCallback(() => {
-    const name = authName.trim();
-    if (!name) return;
-    const employee = {
-      id: crypto.randomUUID(),
-      name,
-      skin: SKINS[Math.floor(Math.random() * SKINS.length)],
-    };
-    window.localStorage.setItem(EMPLOYEE_STORAGE_KEY, JSON.stringify(employee));
-    const savedPosition = window.localStorage.getItem(avatarStorageKey(employee.id));
-    if (savedPosition) {
-      try {
-        const parsed = JSON.parse(savedPosition) as Point;
-        if (Number.isInteger(parsed.x) && Number.isInteger(parsed.y)) setAvatar(parsed);
-      } catch {
-        window.localStorage.removeItem(avatarStorageKey(employee.id));
+  const submitAuth = useCallback(async () => {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthStatus("");
+    const endpoint = authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(authForm),
+    }).catch(() => null);
+
+    if (!response) {
+      setAuthStatus("Could not reach the auth server. Try again.");
+      setAuthBusy(false);
+      return;
+    }
+
+    const data = await response.json().catch(() => ({})) as { user?: EmployeeSession; error?: string; message?: string };
+    if (!response.ok) {
+      setAuthStatus(data.error ?? "Authentication failed.");
+      setAuthBusy(false);
+      return;
+    }
+
+    if (authMode === "register") {
+      setAuthStatus(data.message ?? "Verification email sent. Open the link in your inbox to enter.");
+      setAuthMode("login");
+      setAuthBusy(false);
+      return;
+    }
+
+    if (data.user) {
+      setSession(data.user);
+      const savedPosition = window.localStorage.getItem(avatarStorageKey(data.user.id));
+      if (savedPosition) {
+        try {
+          const parsed = JSON.parse(savedPosition) as Point;
+          if (Number.isInteger(parsed.x) && Number.isInteger(parsed.y)) setAvatar(parsed);
+        } catch {
+          window.localStorage.removeItem(avatarStorageKey(data.user.id));
+        }
+      } else {
+        setAvatar({ x: 25, y: 19 });
       }
     }
-    setSession(employee);
-  }, [authName]);
+    setAuthBusy(false);
+  }, [authBusy, authForm, authMode]);
 
   const signOut = useCallback(async () => {
     const current = sessionRef.current;
@@ -504,7 +540,7 @@ export default function Home() {
     setLocalStream(null);
     setRemoteStreams({});
     setRemoteUsers([]);
-    window.localStorage.removeItem(EMPLOYEE_STORAGE_KEY);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
     setSession(null);
   }, []);
 
@@ -1237,7 +1273,18 @@ export default function Home() {
 
   return (
     <>
-      {!session ? <AuthDialog authName={authName} setAuthName={setAuthName} signIn={signIn} /> : null}
+      {authChecked && !session ? (
+        <AuthDialog
+          busy={authBusy}
+          form={authForm}
+          mode={authMode}
+          setForm={setAuthForm}
+          setMode={setAuthMode}
+          setStatus={setAuthStatus}
+          status={authStatus}
+          submitAuth={submitAuth}
+        />
+      ) : null}
       <main className={activeTool === "calendar" || activeTool === "notifications" ? "gather-shell calendar-shell" : "gather-shell"}>
         <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onSelectTool={setActiveTool} onShowMap={showOfficeMap} />
         {activeTool === "chat" ? (
@@ -1643,30 +1690,57 @@ function ParticipantTile({
 }
 
 function AuthDialog({
-  authName,
-  setAuthName,
-  signIn,
+  busy,
+  form,
+  mode,
+  setForm,
+  setMode,
+  setStatus,
+  status,
+  submitAuth,
 }: {
-  authName: string;
-  setAuthName: (name: string) => void;
-  signIn: () => void;
+  busy: boolean;
+  form: { name: string; email: string; password: string };
+  mode: "login" | "register";
+  setForm: (form: { name: string; email: string; password: string }) => void;
+  setMode: (mode: "login" | "register") => void;
+  setStatus: (status: string) => void;
+  status: string;
+  submitAuth: () => void;
 }) {
+  const isRegister = mode === "register";
   return (
     <div className="auth-backdrop" role="dialog" aria-modal="true" aria-label="Employee sign in">
       <section className="auth-card">
         <span className="auth-kicker">Gather office</span>
-        <h2>Join as a real employee</h2>
-        <p>Enter your name, then open this same URL in another browser or device to test live proximity and room meetings with actual people.</p>
+        <h2>{isRegister ? "Create your employee account" : "Sign in to the office"}</h2>
+        <p>{isRegister ? "Use a real email. We will send a verification link before opening the workspace." : "Enter with your verified employee email and password."}</p>
         <form
           className="auth-form"
           onSubmit={(event) => {
             event.preventDefault();
-            signIn();
+            submitAuth();
           }}
         >
-          <input autoFocus aria-label="Employee name" placeholder="Your name" value={authName} onChange={(event) => setAuthName(event.target.value)} />
-          <button type="submit">Enter office</button>
+          {isRegister ? (
+            <input autoFocus aria-label="Employee name" autoComplete="name" placeholder="Your name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          ) : null}
+          <input autoFocus={!isRegister} aria-label="Employee email" autoComplete="email" placeholder="Email address" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          <input aria-label="Employee password" autoComplete={isRegister ? "new-password" : "current-password"} placeholder="Password" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          {status ? <p className="auth-status">{status}</p> : null}
+          <button disabled={busy} type="submit">{busy ? "Please wait..." : isRegister ? "Send verification email" : "Enter office"}</button>
         </form>
+        <button
+          className="auth-switch"
+          type="button"
+          onClick={() => {
+            setForm({ ...form, password: "" });
+            setStatus("");
+            setMode(isRegister ? "login" : "register");
+          }}
+        >
+          {isRegister ? "Already verified? Sign in" : "Need an account? Register"}
+        </button>
       </section>
     </div>
   );
