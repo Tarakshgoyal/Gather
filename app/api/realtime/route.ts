@@ -23,6 +23,7 @@ type Point = {
 
 type Presence = {
   id: string;
+  officeId?: string;
   name: string;
   skin: string;
   position: Point;
@@ -33,6 +34,7 @@ type Presence = {
 
 type SignalMessage = {
   id: number;
+  officeId?: string;
   from: string;
   to: string;
   meetingId: string;
@@ -43,6 +45,7 @@ type SignalMessage = {
 
 type ChatMessage = {
   id: number;
+  officeId?: string;
   channelId: string;
   fromId: string;
   fromName: string;
@@ -80,6 +83,14 @@ const noStoreHeaders = {
   "Cache-Control": "no-store, max-age=0",
 };
 
+function readOfficeId(url: URL) {
+  return url.searchParams.get("officeId")?.trim() || "default";
+}
+
+function readBodyOfficeId(body: { officeId?: unknown }) {
+  return typeof body.officeId === "string" && body.officeId.trim() ? body.officeId.trim() : "default";
+}
+
 function prune() {
   const now = Date.now();
   for (const [id, user] of presence) {
@@ -94,24 +105,16 @@ function prune() {
   }
 }
 
-async function getSharedPresence() {
+async function getSharedPresence(officeId: string) {
   const now = Date.now();
-  const cached = globalStore.gatherDbPresenceCache ?? { users: [], fetchedAt: 0 };
-  if (now - cached.fetchedAt > 900) {
-    globalStore.gatherDbPresencePromise = globalStore.gatherDbPresencePromise ?? listPresence().finally(() => {
-      globalStore.gatherDbPresencePromise = undefined;
-    });
-    const persistedUsers = await globalStore.gatherDbPresencePromise.catch(() => null);
-    if (persistedUsers) {
-      globalStore.gatherDbPresenceCache = { users: persistedUsers, fetchedAt: now };
-    }
-  }
+  const persistedUsers = await listPresence(officeId).catch(() => null);
 
   const merged = new Map<string, Presence>();
-  for (const user of globalStore.gatherDbPresenceCache?.users ?? []) {
+  for (const user of persistedUsers ?? []) {
     if (now - user.updatedAt <= 15_000) merged.set(user.id, user);
   }
   for (const user of presence.values()) {
+    if ((user as Presence & { officeId?: string }).officeId !== officeId) continue;
     if (now - user.updatedAt <= 15_000) {
       const existing = merged.get(user.id);
       if (!existing || user.updatedAt >= existing.updatedAt) merged.set(user.id, user);
@@ -121,17 +124,17 @@ async function getSharedPresence() {
   return Array.from(merged.values());
 }
 
-async function getSharedSignals(userId: string, after: number) {
+async function getSharedSignals(userId: string, after: number, officeId: string) {
   const now = Date.now();
-  const cacheKey = `${userId}:${after}`;
+  const cacheKey = `${officeId}:${userId}:${after}`;
   const cached = globalStore.gatherDbSignalCache?.get(cacheKey);
   if (cached && now - cached.fetchedAt <= 900) return cached;
 
   let promise = globalStore.gatherDbSignalPromises?.get(cacheKey);
   if (!promise) {
     promise = Promise.all([
-      listSignals(userId, after).catch(() => null),
-      latestSignalId().catch(() => null),
+      listSignals(userId, after, officeId).catch(() => null),
+      latestSignalId(officeId).catch(() => null),
     ]).then(([persistedSignals, persistedLatestSignalId]) => ({
       signals: persistedSignals ?? [],
       latestId: persistedLatestSignalId ?? 0,
@@ -158,18 +161,19 @@ export async function GET(request: Request) {
   prune();
   const url = new URL(request.url);
   const userId = authUser.id;
+  const officeId = readOfficeId(url);
   const after = Number(url.searchParams.get("after") ?? "0");
   const channelId = url.searchParams.get("channelId");
   const afterChat = Number(url.searchParams.get("afterChat") ?? "0");
   const positionFor = url.searchParams.get("positionFor");
   const [sharedPresence, sharedSignals] = await Promise.all([
-    getSharedPresence(),
-    getSharedSignals(userId, after),
+    getSharedPresence(officeId),
+    getSharedSignals(userId, after, officeId),
   ]);
-  const persistedChatMessages = channelId ? await listChatMessages(channelId, afterChat).catch(() => null) : null;
-  const persistedLatestChatId = channelId ? await latestChatId().catch(() => null) : null;
-  const savedPosition = positionFor === authUser.id ? await getEmployeePosition(authUser.id).catch(() => null) : null;
-  const localSignals = signals.filter((message) => message.id > after && (message.to === userId || message.to === "*"));
+  const persistedChatMessages = channelId ? await listChatMessages(channelId, afterChat, officeId).catch(() => null) : null;
+  const persistedLatestChatId = channelId ? await latestChatId(officeId).catch(() => null) : null;
+  const savedPosition = positionFor === authUser.id ? await getEmployeePosition(authUser.id, officeId).catch(() => null) : null;
+  const localSignals = signals.filter((message) => message.id > after && (message.to === userId || message.to === "*") && (message as SignalMessage & { officeId?: string }).officeId === officeId);
   const mergedSignals = new Map<number, SignalMessage>();
   for (const message of sharedSignals.signals) mergedSignals.set(message.id, message);
   for (const message of localSignals) mergedSignals.set(message.id, message);
@@ -189,6 +193,7 @@ export async function POST(request: Request) {
   const authUser = getRequestJwtUser(request);
   if (!authUser) return Response.json({ error: "Authentication required" }, { status: 401, headers: noStoreHeaders });
   const body = await request.json();
+  const officeId = readBodyOfficeId(body);
   prune();
 
   if (body.type === "presence") {
@@ -199,6 +204,7 @@ export async function POST(request: Request) {
       position: body.user.position,
       status: String(body.user.status),
       meetingId: body.user.meetingId ? String(body.user.meetingId) : null,
+      officeId,
       updatedAt: Date.now(),
     };
     presence.set(user.id, user);
@@ -207,7 +213,7 @@ export async function POST(request: Request) {
       globalStore.gatherPresencePersistedAt?.set(user.id, Date.now());
       await savePresence(user).catch(() => null);
     }
-    void saveEmployeePosition(authUser.id, body.user.position).catch(() => null);
+    void saveEmployeePosition(authUser.id, body.user.position, officeId).catch(() => null);
 
     return Response.json({ ok: true }, { headers: noStoreHeaders });
   }
@@ -215,6 +221,7 @@ export async function POST(request: Request) {
   if (body.type === "signal") {
     const persistedId = await createSignal({
       from: authUser.id,
+      officeId,
       to: String(body.message.to),
       meetingId: String(body.message.meetingId),
       kind: body.message.kind,
@@ -224,6 +231,7 @@ export async function POST(request: Request) {
     const signalId = persistedId ?? globalStore.gatherSignalSeq;
     signals.push({
       id: signalId,
+      officeId,
       from: authUser.id,
       to: String(body.message.to),
       meetingId: String(body.message.meetingId),
@@ -243,6 +251,7 @@ export async function POST(request: Request) {
 
     const persistedMessage = await createChatMessage({
       channelId: String(body.message.channelId),
+      officeId,
       fromId: authUser.id,
       fromName: authUser.name,
       body: text.slice(0, 2000),
@@ -254,6 +263,7 @@ export async function POST(request: Request) {
     globalStore.gatherChatSeq = (globalStore.gatherChatSeq ?? 0) + 1;
     const message = {
       id: globalStore.gatherChatSeq,
+      officeId,
       channelId: String(body.message.channelId),
       fromId: authUser.id,
       fromName: authUser.name,
@@ -268,10 +278,11 @@ export async function POST(request: Request) {
   if (body.type === "leave") {
     const userId = authUser.id;
     presence.delete(userId);
-    void deletePresence(userId).catch(() => null);
+    void deletePresence(userId, officeId).catch(() => null);
 
     const persistedId = await createSignal({
       from: userId,
+      officeId,
       to: "*",
       meetingId: "*",
       kind: "leave",
@@ -281,6 +292,7 @@ export async function POST(request: Request) {
     const signalId = persistedId ?? globalStore.gatherSignalSeq;
     signals.push({
       id: signalId,
+      officeId,
       from: userId,
       to: "*",
       meetingId: "*",

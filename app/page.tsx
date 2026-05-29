@@ -2,13 +2,21 @@
 
 import { CSSProperties, Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, PanelLeftClose, PanelLeftOpen, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
+import { Bell, Bot, Building2, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, PanelLeftClose, PanelLeftOpen, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
 type Floor = "grass" | "wood" | "blue" | "gray" | "sand" | "rug" | "wall";
 type MeetingMode = "room" | "proximity";
 type RailTool = "gather" | "search" | "map" | "chat" | "calendar" | "notifications" | "settings";
+type OfficeMembership = {
+  id: string;
+  code: string;
+  name: string;
+  creatorId: string;
+  role: "owner" | "member";
+  createdAt: string;
+};
 type MeetingZone = {
   id: string;
   name: string;
@@ -38,6 +46,7 @@ type EmployeeSession = {
   email: string;
   skin: string;
 };
+const officeStorageKey = (employeeId: string) => `gather.active.office:${employeeId}`;
 type ActiveMeeting = {
   id: string;
   mode: MeetingMode;
@@ -52,6 +61,7 @@ type LiveKitConnection = {
 } | null;
 type ChatMessage = {
   id: number;
+  officeId?: string;
   channelId: string;
   fromId: string;
   fromName: string;
@@ -65,6 +75,7 @@ type ChatChannel = {
 };
 type CalendarEvent = {
   id: number;
+  officeId: string;
   title: string;
   description: string;
   roomId: string;
@@ -87,6 +98,7 @@ type CalendarDraft = {
 };
 type AppNotification = {
   id: number;
+  officeId: string;
   eventId: number;
   type: "created" | "day_before" | "hour_before" | "started";
   title: string;
@@ -395,6 +407,13 @@ export default function Home() {
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
   const [leftDrawerHidden, setLeftDrawerHidden] = useState(false);
   const [cameraOffset, setCameraOffset] = useState({ x: 0, y: 0 });
+  const [offices, setOffices] = useState<OfficeMembership[]>([]);
+  const [activeOffice, setActiveOffice] = useState<OfficeMembership | null>(null);
+  const [officeDialogOpen, setOfficeDialogOpen] = useState(false);
+  const [officeMode, setOfficeMode] = useState<"create" | "join">("create");
+  const [officeForm, setOfficeForm] = useState({ name: "", code: "" });
+  const [officeStatus, setOfficeStatus] = useState("");
+  const [officeBusy, setOfficeBusy] = useState(false);
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarRoomId, setCalendarRoomId] = useState("all");
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -413,10 +432,15 @@ export default function Home() {
   const sessionRef = useRef<EmployeeSession | null>(null);
   const lastSignalIdRef = useRef(0);
   const lastChatIdRef = useRef(0);
+  const activeOfficeRef = useRef<OfficeMembership | null>(null);
 
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  useEffect(() => {
+    activeOfficeRef.current = activeOffice;
+  }, [activeOffice]);
 
   useEffect(() => {
     let stopped = false;
@@ -446,17 +470,47 @@ export default function Home() {
   }, [avatar, session]);
 
   useEffect(() => {
+    if (!session) return;
+
+    let stopped = false;
+    const currentSession = session;
+    async function loadOffices() {
+      const response = await fetch("/api/offices", { cache: "no-store" }).catch(() => null);
+      if (!response?.ok || stopped) {
+        if (!stopped) {
+          setOffices([]);
+          setActiveOffice(null);
+          setOfficeDialogOpen(true);
+        }
+        return;
+      }
+      const data = await response.json() as { offices: OfficeMembership[] };
+      const savedOfficeId = window.localStorage.getItem(officeStorageKey(currentSession.id));
+      const nextActiveOffice = data.offices.find((office) => office.id === savedOfficeId) ?? data.offices[0] ?? null;
+      setOffices(data.offices);
+      setActiveOffice(nextActiveOffice);
+      setOfficeDialogOpen(!nextActiveOffice);
+    }
+
+    void loadOffices();
+    return () => {
+      stopped = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !activeOffice) return;
     let stopped = false;
     const currentSession = session;
+    const currentOffice = activeOffice;
 
     async function restorePosition() {
-      const query = new URLSearchParams({ userId: currentSession.id, after: "0", positionFor: currentSession.id });
+      const query = new URLSearchParams({ userId: currentSession.id, after: "0", positionFor: currentSession.id, officeId: currentOffice.id });
       const response = await fetch(`${SIGNAL_URL}?${query.toString()}`).catch(() => null);
       if (!response?.ok || stopped) return;
       const data = await response.json() as { savedPosition?: Point | null };
@@ -469,7 +523,7 @@ export default function Home() {
     return () => {
       stopped = true;
     };
-  }, [session]);
+  }, [activeOffice, session]);
 
   const displayName = session?.name ?? "Guest";
 
@@ -523,19 +577,71 @@ export default function Home() {
 
   const signOut = useCallback(async () => {
     const current = sessionRef.current;
+    const currentOffice = activeOfficeRef.current;
     if (current) {
       await fetch(SIGNAL_URL, {
         method: "POST",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "leave", userId: current.id }),
+        body: JSON.stringify({ type: "leave", userId: current.id, officeId: currentOffice?.id }),
       }).catch(() => undefined);
     }
     setLiveKitConnection(null);
     setRemoteUsers([]);
+    setOffices([]);
+    setActiveOffice(null);
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
     setSession(null);
   }, []);
+
+  const submitOffice = useCallback(async () => {
+    if (!session || officeBusy) return;
+    setOfficeBusy(true);
+    setOfficeStatus("");
+    const response = await fetch("/api/offices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(officeMode === "create"
+        ? { action: "create", name: officeForm.name }
+        : { action: "join", code: officeForm.code }),
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      const data = await response?.json().catch(() => ({})) as { error?: string };
+      setOfficeStatus(data.error ?? "Could not update office membership.");
+      setOfficeBusy(false);
+      return;
+    }
+
+    const data = await response.json() as { office: OfficeMembership };
+    setOffices((current) => {
+      const withoutDuplicate = current.filter((office) => office.id !== data.office.id);
+      return [data.office, ...withoutDuplicate];
+    });
+    setActiveOffice(data.office);
+    window.localStorage.setItem(officeStorageKey(session.id), data.office.id);
+    setOfficeDialogOpen(false);
+    setOfficeForm({ name: "", code: "" });
+    setRemoteUsers([]);
+    setChatMessages([]);
+    lastSignalIdRef.current = 0;
+    lastChatIdRef.current = 0;
+    setOfficeBusy(false);
+  }, [officeBusy, officeForm.code, officeForm.name, officeMode, session]);
+
+  const switchOffice = useCallback((office: OfficeMembership) => {
+    if (!session) return;
+    setActiveOffice(office);
+    window.localStorage.setItem(officeStorageKey(session.id), office.id);
+    setOfficeDialogOpen(false);
+    setRemoteUsers([]);
+    setChatMessages([]);
+    setCalendarEvents([]);
+    setNotifications([]);
+    lastSignalIdRef.current = 0;
+    lastChatIdRef.current = 0;
+    setActiveTool("map");
+  }, [session]);
 
   const markNotificationAsRead = useCallback(async (notificationId: number) => {
     const response = await fetch("/api/notifications", {
@@ -710,7 +816,7 @@ export default function Home() {
     if (currentZone) {
       const participants = remoteUsers.filter((person) => isInsideZone(person.position, currentZone));
       return {
-        id: `room:${currentZone.id}`,
+        id: `${activeOffice?.id ?? "office"}:room:${currentZone.id}`,
         mode: "room" as MeetingMode,
         title: currentZone.name,
         participants,
@@ -725,7 +831,7 @@ export default function Home() {
 
     if (nearby.length) {
       return {
-        id: `proximity:${[session.id, ...nearby.map((person) => person.id)].sort().join(":")}`,
+        id: `${activeOffice?.id ?? "office"}:proximity:${[session.id, ...nearby.map((person) => person.id)].sort().join(":")}`,
         mode: "proximity" as MeetingMode,
         title: nearby.length === 1 ? `Huddle with ${nearby[0].name}` : "Nearby huddle",
         participants: nearby,
@@ -734,12 +840,13 @@ export default function Home() {
     }
 
     return null;
-  }, [avatar, currentZone, remoteUsers, session]);
+  }, [activeOffice, avatar, currentZone, remoteUsers, session]);
   const activeMeetingRoomName = activeMeeting?.id ?? null;
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !activeOffice) return;
     let stopped = false;
+    const currentOffice = activeOffice;
 
     async function syncPresence() {
       const currentSession = sessionRef.current;
@@ -750,6 +857,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "presence",
+          officeId: currentOffice.id,
           user: {
             id: currentSession.id,
             name: currentSession.name,
@@ -770,16 +878,17 @@ export default function Home() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [activeMeeting, avatar, session]);
+  }, [activeMeeting, activeOffice, avatar, session]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !activeOffice) return;
     let stopped = false;
+    const currentOffice = activeOffice;
 
     async function poll() {
       const currentSession = sessionRef.current;
       if (!currentSession) return;
-      const query = new URLSearchParams({ userId: currentSession.id, after: String(lastSignalIdRef.current) });
+      const query = new URLSearchParams({ userId: currentSession.id, after: String(lastSignalIdRef.current), officeId: currentOffice.id });
       const response = await fetch(`${SIGNAL_URL}?${query.toString()}`, { cache: "no-store" }).catch(() => null);
       if (!response?.ok || stopped) return;
       const data = await response.json() as { users: Person[]; latestSignalId: number };
@@ -795,16 +904,18 @@ export default function Home() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [session]);
+  }, [activeOffice, session]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || !activeOffice) return;
     let stopped = false;
     const currentSession = session;
+    const currentOffice = activeOffice;
 
     async function pollChat() {
       const query = new URLSearchParams({
         userId: currentSession.id,
+        officeId: currentOffice.id,
         after: String(lastSignalIdRef.current),
         channelId: selectedChannelId,
         afterChat: String(lastChatIdRef.current),
@@ -831,12 +942,13 @@ export default function Home() {
       window.clearTimeout(resetTimer);
       window.clearInterval(timer);
     };
-  }, [selectedChannelId, session]);
+  }, [activeOffice, selectedChannelId, session]);
 
   const sendChatMessage = useCallback(async () => {
     const currentSession = sessionRef.current;
+    const currentOffice = activeOfficeRef.current;
     const body = chatDraft.trim();
-    if (!currentSession || !body) return;
+    if (!currentSession || !currentOffice || !body) return;
 
     setChatDraft("");
     const response = await fetch(SIGNAL_URL, {
@@ -845,6 +957,7 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         type: "chat",
+        officeId: currentOffice.id,
         message: {
           channelId: selectedChannelId,
           fromId: currentSession.id,
@@ -871,9 +984,10 @@ export default function Home() {
     let stopped = false;
 
     async function loadEvents() {
+      if (!activeOffice) return;
       const rangeStart = calendarWeekStart.toISOString();
       const rangeEnd = addDays(calendarWeekStart, 7).toISOString();
-      const query = new URLSearchParams({ start: rangeStart, end: rangeEnd, roomId: calendarRoomId });
+      const query = new URLSearchParams({ start: rangeStart, end: rangeEnd, roomId: calendarRoomId, officeId: activeOffice.id });
       const response = await fetch(`/api/calendar?${query.toString()}`).catch(() => null);
       if (!response?.ok || stopped) return;
       const data = await response.json() as { events: CalendarEvent[] };
@@ -888,10 +1002,10 @@ export default function Home() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [calendarRoomId, calendarWeekStart]);
+  }, [activeOffice, calendarRoomId, calendarWeekStart]);
 
   const createCalendarMeeting = useCallback(async () => {
-    if (!session) return;
+    if (!session || !activeOffice) return;
     const room = calendarRooms.find((item) => item.id === calendarDraft.roomId);
     if (!room) return;
 
@@ -906,6 +1020,7 @@ export default function Home() {
         title: calendarDraft.title,
         description: calendarDraft.description,
         roomId: room.id,
+        officeId: activeOffice.id,
         roomName: room.name,
         startAt: startAt.toISOString(),
         endAt: endAt.toISOString(),
@@ -919,10 +1034,10 @@ export default function Home() {
     setCalendarEvents((current) => [...current, data.event].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()));
     setCalendarDraft(createInitialCalendarDraft(room.id));
     setCalendarFormOpen(false);
-  }, [calendarDraft, calendarRooms, session]);
+  }, [activeOffice, calendarDraft, calendarRooms, session]);
 
   const createNpcMeeting = useCallback(async () => {
-    if (!session || !activeNpcZone) return;
+    if (!session || !activeNpcZone || !activeOffice) return;
     const startAt = new Date(`${npcDraft.date}T${npcDraft.startTime}`);
     const endAt = new Date(`${npcDraft.date}T${npcDraft.endTime}`);
     if (!npcDraft.title.trim() || Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || endAt <= startAt) {
@@ -938,6 +1053,7 @@ export default function Home() {
         title: npcDraft.title,
         description: npcDraft.description,
         roomId: activeNpcZone.id,
+        officeId: activeOffice.id,
         roomName: activeNpcZone.name,
         startAt: startAt.toISOString(),
         endAt: endAt.toISOString(),
@@ -957,14 +1073,14 @@ export default function Home() {
     setNpcDraft(createInitialCalendarDraft(activeNpcZone.id));
     setNpcNotice("Meeting created for this room.");
     window.setTimeout(() => setNpcNotice(""), 2800);
-  }, [activeNpcZone, npcDraft, session]);
+  }, [activeNpcZone, activeOffice, npcDraft, session]);
 
   const startCalendarMeeting = useCallback(async (event: CalendarEvent) => {
     if (!session || event.creatorId !== session.id) return;
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, officeId: activeOffice?.id }),
     }).catch(() => null);
     if (!response?.ok) return;
     const data = await response.json() as { event: CalendarEvent };
@@ -972,14 +1088,14 @@ export default function Home() {
     setSelectedCalendarEvent(data.event);
     setCalendarNotice("Meeting started. Teammates can join now.");
     window.setTimeout(() => setCalendarNotice(""), 2800);
-  }, [session]);
+  }, [activeOffice, session]);
 
   const endCalendarMeeting = useCallback(async (event: CalendarEvent) => {
     if (!session || event.creatorId !== session.id) return;
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end" }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id }),
     }).catch(() => null);
     if (!response?.ok) return;
     const data = await response.json() as { event: CalendarEvent };
@@ -987,7 +1103,7 @@ export default function Home() {
     setSelectedCalendarEvent(data.event);
     setCalendarNotice("Meeting ended.");
     window.setTimeout(() => setCalendarNotice(""), 2800);
-  }, [session]);
+  }, [activeOffice, session]);
 
   const startNpcMeeting = useCallback(async (event: CalendarEvent) => {
     if (!session || event.creatorId !== session.id) {
@@ -999,7 +1115,7 @@ export default function Home() {
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, officeId: activeOffice?.id }),
     }).catch(() => null);
 
     if (!response?.ok) {
@@ -1012,7 +1128,7 @@ export default function Home() {
     setCalendarEvents((current) => current.map((item) => item.id === data.event.id ? data.event : item));
     setNpcNotice("Meeting started. Teammates can join now.");
     window.setTimeout(() => setNpcNotice(""), 2800);
-  }, [session]);
+  }, [activeOffice, session]);
 
   const endNpcMeeting = useCallback(async (event: CalendarEvent) => {
     if (!session || event.creatorId !== session.id) {
@@ -1024,7 +1140,7 @@ export default function Home() {
     const response = await fetch("/api/calendar", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end" }),
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end", officeId: activeOffice?.id }),
     }).catch(() => null);
 
     if (!response?.ok) {
@@ -1037,7 +1153,7 @@ export default function Home() {
     setCalendarEvents((current) => current.map((item) => item.id === data.event.id ? data.event : item));
     setNpcNotice("Meeting ended.");
     window.setTimeout(() => setNpcNotice(""), 2800);
-  }, [session]);
+  }, [activeOffice, session]);
 
   const joinCalendarMeeting = useCallback((event: CalendarEvent) => {
     if (!event.liveStartedAt || event.liveEndedAt) {
@@ -1079,7 +1195,9 @@ export default function Home() {
     let stopped = false;
 
     async function loadNotifications() {
-      const response = await fetch("/api/notifications").catch(() => null);
+      if (!activeOffice) return;
+      const query = new URLSearchParams({ officeId: activeOffice.id });
+      const response = await fetch(`/api/notifications?${query.toString()}`).catch(() => null);
       if (!response?.ok || stopped) return;
       const data = await response.json() as { notifications: AppNotification[] };
       setNotifications(data.notifications);
@@ -1093,7 +1211,7 @@ export default function Home() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [activeOffice]);
 
   useEffect(() => {
     if (!activeMeetingRoomName || !session) return;
@@ -1150,8 +1268,23 @@ export default function Home() {
           submitAuth={submitAuth}
         />
       ) : null}
+      {session && officeDialogOpen ? (
+        <OfficeDialog
+          activeOffice={activeOffice}
+          busy={officeBusy}
+          form={officeForm}
+          mode={officeMode}
+          offices={offices}
+          setForm={setOfficeForm}
+          setMode={setOfficeMode}
+          status={officeStatus}
+          submitOffice={submitOffice}
+          switchOffice={switchOffice}
+          onClose={activeOffice ? () => setOfficeDialogOpen(false) : undefined}
+        />
+      ) : null}
       <main className={shellClassName}>
-        <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onSelectTool={selectRailTool} onShowMap={showOfficeMap} />
+        <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onOpenOffices={() => setOfficeDialogOpen(true)} onSelectTool={selectRailTool} onShowMap={showOfficeMap} />
         {activeTool === "chat" ? (
           <ChatWorkspace
             channels={chatChannels}
@@ -1232,6 +1365,12 @@ export default function Home() {
                   <input aria-label="Employee name" disabled placeholder="Sign in as an employee" value={session?.name ?? ""} />
                   {session ? <button className="signout-button" onClick={signOut} type="button">Sign out</button> : null}
                 </label>
+                {activeOffice ? (
+                  <button className="office-id-chip" onClick={() => setOfficeDialogOpen(true)} type="button">
+                    <span>{activeOffice.name}</span>
+                    <strong>ID {activeOffice.code}</strong>
+                  </button>
+                ) : null}
                 <section className="online-list">
                   <button className="online-heading" type="button">Online ({remoteUsers.length + (session ? 1 : 0)})</button>
                   {session ? <PersonRow name={displayName} status={activeMeeting?.title ?? "Active"} tone="self" /> : null}
@@ -1760,6 +1899,72 @@ function AuthDialog({
   );
 }
 
+function OfficeDialog({
+  activeOffice,
+  busy,
+  form,
+  mode,
+  offices,
+  setForm,
+  setMode,
+  status,
+  submitOffice,
+  switchOffice,
+  onClose,
+}: {
+  activeOffice: OfficeMembership | null;
+  busy: boolean;
+  form: { name: string; code: string };
+  mode: "create" | "join";
+  offices: OfficeMembership[];
+  setForm: (form: { name: string; code: string }) => void;
+  setMode: (mode: "create" | "join") => void;
+  status: string;
+  submitOffice: () => void;
+  switchOffice: (office: OfficeMembership) => void;
+  onClose?: () => void;
+}) {
+  return (
+    <div className="auth-backdrop" role="dialog" aria-modal="true" aria-label="Choose office">
+      <section className="auth-card office-card">
+        <div className="office-dialog-top">
+          <span className="auth-kicker">Gather office</span>
+          {onClose ? <button aria-label="Close office dialog" onClick={onClose} type="button"><X size={18} /></button> : null}
+        </div>
+        <h2>{offices.length ? "Choose an office" : "Create or join an office"}</h2>
+        <p>Every office has a unique ID. Share it with employees so they can enter the same workspace.</p>
+
+        {offices.length ? (
+          <div className="office-list">
+            {offices.map((office) => (
+              <button className={office.id === activeOffice?.id ? "office-option active" : "office-option"} key={office.id} onClick={() => switchOffice(office)} type="button">
+                <span><Building2 size={17} /> {office.name}</span>
+                <strong>{office.code}</strong>
+                <small>{office.role === "owner" ? "Creator" : "Member"}</small>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="office-mode-tabs">
+          <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")} type="button">Create office</button>
+          <button className={mode === "join" ? "active" : ""} onClick={() => setMode("join")} type="button">Join office</button>
+        </div>
+
+        <form className="auth-form" onSubmit={(event) => { event.preventDefault(); submitOffice(); }}>
+          {mode === "create" ? (
+            <input aria-label="Office name" placeholder="Office name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required />
+          ) : (
+            <input aria-label="Office ID" placeholder="Office ID" value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value.toUpperCase() })} required />
+          )}
+          {status ? <p className="auth-status">{status}</p> : null}
+          <button disabled={busy} type="submit">{busy ? "Please wait..." : mode === "create" ? "Create office" : "Join office"}</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function CalendarWorkspace({
   rooms,
   weekDays,
@@ -2189,11 +2394,13 @@ function createInitialCalendarDraft(roomId: string): CalendarDraft {
 function LeftRail({
   activeTool,
   notificationCount,
+  onOpenOffices,
   onSelectTool,
   onShowMap,
 }: {
   activeTool: RailTool;
   notificationCount: number;
+  onOpenOffices: () => void;
   onSelectTool: (tool: RailTool) => void;
   onShowMap: () => void;
 }) {
@@ -2227,6 +2434,14 @@ function LeftRail({
         </button>
       ))}
       <div className="rail-spacer" />
+      <button
+        aria-label="Create or join office"
+        className="rail-button"
+        onClick={onOpenOffices}
+        type="button"
+      >
+        <Building2 aria-hidden="true" size={24} strokeWidth={2.2} />
+      </button>
       <button
         aria-label="Settings"
         aria-pressed={activeTool === "settings"}

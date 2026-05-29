@@ -144,10 +144,136 @@ button {
   font-weight: 1000;
 }
 
+.office-card {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.office-dialog-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.office-dialog-top button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: #f4f5f7;
+  color: #242a32;
+}
+
+.office-list {
+  display: grid;
+  max-height: 210px;
+  gap: 8px;
+  margin-bottom: 14px;
+  overflow: auto;
+}
+
+.office-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 12px;
+  border: 1px solid #e3e7ef;
+  border-radius: 14px;
+  background: #fbfcfd;
+  padding: 12px;
+  color: #242a32;
+  text-align: left;
+}
+
+.office-option.active {
+  border-color: #20d8c5;
+  background: #f0fffc;
+}
+
+.office-option span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  font-weight: 1000;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-option strong {
+  border-radius: 999px;
+  background: #eef1ff;
+  padding: 5px 8px;
+  color: #4e55ec;
+  font-size: 12px;
+}
+
+.office-option small {
+  grid-column: 1 / -1;
+  color: #6d7480;
+  font-weight: 900;
+}
+
+.office-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-radius: 12px;
+  background: #f4f5f7;
+  padding: 5px;
+}
+
+.office-mode-tabs button {
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 10px;
+  color: #5f6872;
+  font-weight: 1000;
+}
+
+.office-mode-tabs button.active {
+  background: #fff;
+  color: #242a32;
+  box-shadow: 0 3px 10px rgba(20, 28, 35, 0.08);
+}
+
 .signout-button {
   flex: none;
   padding: 6px 9px;
   font-size: 12px;
+}
+
+.office-id-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -2px 18px 0;
+  border: 1px solid #dff4f1;
+  border-radius: 14px;
+  background: #f6fffd;
+  padding: 11px 12px;
+  color: #1f7469;
+  text-align: left;
+}
+
+.office-id-chip span {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 1000;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-id-chip strong {
+  flex: none;
+  color: #4750f5;
+  font-size: 12px;
+  font-weight: 1000;
 }
 
 .gather-shell {

@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { randomUUID } from "node:crypto";
 import type { AuthUser } from "./auth";
 
 const globalStore = globalThis as typeof globalThis & {
@@ -8,6 +9,7 @@ const globalStore = globalThis as typeof globalThis & {
 
 export type StoredChatMessage = {
   id: number;
+  officeId: string;
   channelId: string;
   fromId: string;
   fromName: string;
@@ -17,6 +19,7 @@ export type StoredChatMessage = {
 
 export type StoredPresence = {
   id: string;
+  officeId?: string;
   name: string;
   skin: string;
   position: { x: number; y: number };
@@ -37,6 +40,7 @@ export type StoredSignalMessage = {
 
 export type StoredCalendarEvent = {
   id: number;
+  officeId: string;
   title: string;
   description: string;
   roomId: string;
@@ -52,6 +56,7 @@ export type StoredCalendarEvent = {
 
 export type StoredNotification = {
   id: number;
+  officeId: string;
   eventId: number;
   type: "created" | "day_before" | "hour_before" | "started";
   title: string;
@@ -65,6 +70,17 @@ export type StoredNotification = {
 export type StoredAuthUser = AuthUser & {
   passwordHash: string;
 };
+
+export type StoredOffice = {
+  id: string;
+  code: string;
+  name: string;
+  creatorId: string;
+  role: "owner" | "member";
+  createdAt: string;
+};
+
+const DEFAULT_OFFICE_ID = "default";
 
 export function getPool() {
   if (!process.env.DATABASE_URL) return null;
@@ -86,6 +102,7 @@ export async function ensureDatabase() {
   globalStore.gatherDbReady ??= pool.query(`
     CREATE TABLE IF NOT EXISTS chat_messages (
       id BIGSERIAL PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       channel_id TEXT NOT NULL,
       from_id TEXT NOT NULL,
       from_name TEXT NOT NULL,
@@ -93,18 +110,26 @@ export async function ensureDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
-    CREATE INDEX IF NOT EXISTS chat_messages_channel_id_id_idx
-      ON chat_messages (channel_id, id);
+    ALTER TABLE chat_messages
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
+    CREATE INDEX IF NOT EXISTS chat_messages_office_channel_id_id_idx
+      ON chat_messages (office_id, channel_id, id);
 
     CREATE TABLE IF NOT EXISTS employee_positions (
       employee_id TEXT PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       x INTEGER NOT NULL,
       y INTEGER NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE employee_positions
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
     CREATE TABLE IF NOT EXISTS realtime_presence (
       employee_id TEXT PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       name TEXT NOT NULL,
       skin TEXT NOT NULL,
       x INTEGER NOT NULL,
@@ -114,11 +139,18 @@ export async function ensureDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE realtime_presence
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
     CREATE INDEX IF NOT EXISTS realtime_presence_updated_at_idx
       ON realtime_presence (updated_at);
 
+    CREATE INDEX IF NOT EXISTS realtime_presence_office_updated_at_idx
+      ON realtime_presence (office_id, updated_at);
+
     CREATE TABLE IF NOT EXISTS realtime_signals (
       id BIGSERIAL PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       from_id TEXT NOT NULL,
       to_id TEXT NOT NULL,
       meeting_id TEXT NOT NULL,
@@ -127,14 +159,21 @@ export async function ensureDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE realtime_signals
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
     CREATE INDEX IF NOT EXISTS realtime_signals_to_id_id_idx
       ON realtime_signals (to_id, id);
+
+    CREATE INDEX IF NOT EXISTS realtime_signals_office_to_id_id_idx
+      ON realtime_signals (office_id, to_id, id);
 
     CREATE INDEX IF NOT EXISTS realtime_signals_created_at_idx
       ON realtime_signals (created_at);
 
     CREATE TABLE IF NOT EXISTS calendar_events (
       id BIGSERIAL PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       title TEXT NOT NULL CHECK (char_length(title) > 0 AND char_length(title) <= 160),
       description TEXT NOT NULL DEFAULT '',
       room_id TEXT NOT NULL,
@@ -152,11 +191,17 @@ export async function ensureDatabase() {
     ALTER TABLE calendar_events
       ADD COLUMN IF NOT EXISTS live_ended_at TIMESTAMPTZ;
 
+    ALTER TABLE calendar_events
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
     CREATE INDEX IF NOT EXISTS calendar_events_start_at_idx ON calendar_events (start_at);
     CREATE INDEX IF NOT EXISTS calendar_events_room_id_start_at_idx ON calendar_events (room_id, start_at);
+    CREATE INDEX IF NOT EXISTS calendar_events_office_start_at_idx ON calendar_events (office_id, start_at);
+    CREATE INDEX IF NOT EXISTS calendar_events_office_room_id_start_at_idx ON calendar_events (office_id, room_id, start_at);
 
     CREATE TABLE IF NOT EXISTS notifications (
       id BIGSERIAL PRIMARY KEY,
+      office_id TEXT NOT NULL DEFAULT 'default',
       event_id BIGINT NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
       type TEXT NOT NULL CHECK (type IN ('created', 'day_before', 'hour_before', 'started')),
       title TEXT NOT NULL,
@@ -171,8 +216,12 @@ export async function ensureDatabase() {
     ALTER TABLE notifications
       ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
 
+    ALTER TABLE notifications
+      ADD COLUMN IF NOT EXISTS office_id TEXT NOT NULL DEFAULT 'default';
+
     CREATE INDEX IF NOT EXISTS notifications_created_at_idx ON notifications (created_at DESC);
     CREATE INDEX IF NOT EXISTS notifications_read_at_created_at_idx ON notifications (read_at, created_at DESC);
+    CREATE INDEX IF NOT EXISTS notifications_office_created_at_idx ON notifications (office_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS auth_users (
       id UUID PRIMARY KEY,
@@ -195,12 +244,31 @@ export async function ensureDatabase() {
 
     CREATE INDEX IF NOT EXISTS email_verification_tokens_user_id_idx
       ON email_verification_tokens (user_id);
+
+    CREATE TABLE IF NOT EXISTS offices (
+      id UUID PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL CHECK (char_length(name) > 0 AND char_length(name) <= 100),
+      creator_id UUID NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS office_members (
+      office_id UUID NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('owner', 'member')),
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (office_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS office_members_user_id_idx
+      ON office_members (user_id);
   `).then(() => undefined);
 
   await globalStore.gatherDbReady;
 }
 
-export async function listChatMessages(channelId: string, afterId: number) {
+export async function listChatMessages(channelId: string, afterId: number, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
@@ -208,6 +276,7 @@ export async function listChatMessages(channelId: string, afterId: number) {
   if (afterId <= 0) {
     const result = await pool.query<{
       id: string;
+      office_id: string;
       channel_id: string;
       from_id: string;
       from_name: string;
@@ -216,19 +285,20 @@ export async function listChatMessages(channelId: string, afterId: number) {
     }>(
       `SELECT *
          FROM (
-           SELECT id, channel_id, from_id, from_name, body,
+           SELECT id, office_id, channel_id, from_id, from_name, body,
                   (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms
              FROM chat_messages
-            WHERE channel_id = $1
+            WHERE office_id = $1 AND channel_id = $2
             ORDER BY id DESC
             LIMIT 100
          ) recent
         ORDER BY id ASC`,
-      [channelId],
+      [officeId, channelId],
     );
 
     return result.rows.map((row) => ({
       id: Number(row.id),
+      officeId: row.office_id,
       channelId: row.channel_id,
       fromId: row.from_id,
       fromName: row.from_name,
@@ -239,23 +309,25 @@ export async function listChatMessages(channelId: string, afterId: number) {
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     channel_id: string;
     from_id: string;
     from_name: string;
     body: string;
     created_at_ms: string;
   }>(
-    `SELECT id, channel_id, from_id, from_name, body,
+    `SELECT id, office_id, channel_id, from_id, from_name, body,
             (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms
        FROM chat_messages
-      WHERE channel_id = $1 AND id > $2
+      WHERE office_id = $1 AND channel_id = $2 AND id > $3
       ORDER BY id ASC
       LIMIT 100`,
-    [channelId, afterId],
+    [officeId, channelId, afterId],
   );
 
   return result.rows.map((row) => ({
     id: Number(row.id),
+    officeId: row.office_id,
     channelId: row.channel_id,
     fromId: row.from_id,
     fromName: row.from_name,
@@ -275,13 +347,14 @@ export async function pruneRealtimeState() {
   return true;
 }
 
-export async function listPresence() {
+export async function listPresence(officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
   await pruneRealtimeState();
   const result = await pool.query<{
     employee_id: string;
+    office_id: string;
     name: string;
     skin: string;
     x: number;
@@ -290,10 +363,12 @@ export async function listPresence() {
     meeting_id: string | null;
     updated_at_ms: string;
   }>(
-    `SELECT employee_id, name, skin, x, y, status, meeting_id,
+    `SELECT employee_id, office_id, name, skin, x, y, status, meeting_id,
             (EXTRACT(EPOCH FROM updated_at) * 1000)::bigint AS updated_at_ms
        FROM realtime_presence
+      WHERE office_id = $1
       ORDER BY updated_at DESC`,
+    [officeId],
   );
 
   return result.rows.map((row) => ({
@@ -312,10 +387,11 @@ export async function savePresence(user: StoredPresence) {
   if (!pool) return null;
   await ensureDatabase();
   await pool.query(
-    `INSERT INTO realtime_presence (employee_id, name, skin, x, y, status, meeting_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO realtime_presence (employee_id, office_id, name, skin, x, y, status, meeting_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (employee_id)
      DO UPDATE SET
+       office_id = EXCLUDED.office_id,
        name = EXCLUDED.name,
        skin = EXCLUDED.skin,
        x = EXCLUDED.x,
@@ -323,33 +399,36 @@ export async function savePresence(user: StoredPresence) {
        status = EXCLUDED.status,
        meeting_id = EXCLUDED.meeting_id,
        updated_at = now()`,
-    [user.id, user.name, user.skin, user.position.x, user.position.y, user.status, user.meetingId],
+    [user.id, (user as StoredPresence & { officeId?: string }).officeId ?? DEFAULT_OFFICE_ID, user.name, user.skin, user.position.x, user.position.y, user.status, user.meetingId],
   );
   return true;
 }
 
-export async function deletePresence(employeeId: string) {
+export async function deletePresence(employeeId: string, officeId?: string) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
-  await pool.query("DELETE FROM realtime_presence WHERE employee_id = $1", [employeeId]);
+  await pool.query(
+    officeId ? "DELETE FROM realtime_presence WHERE employee_id = $1 AND office_id = $2" : "DELETE FROM realtime_presence WHERE employee_id = $1",
+    officeId ? [employeeId, officeId] : [employeeId],
+  );
   return true;
 }
 
-export async function createSignal(message: Omit<StoredSignalMessage, "id" | "createdAt">) {
+export async function createSignal(message: Omit<StoredSignalMessage, "id" | "createdAt"> & { officeId?: string }) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
   const result = await pool.query<{ id: string }>(
-    `INSERT INTO realtime_signals (from_id, to_id, meeting_id, kind, payload)
-     VALUES ($1, $2, $3, $4, $5::jsonb)
+    `INSERT INTO realtime_signals (office_id, from_id, to_id, meeting_id, kind, payload)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING id`,
-    [message.from, message.to, message.meetingId, message.kind, JSON.stringify(message.payload ?? {})],
+    [message.officeId ?? DEFAULT_OFFICE_ID, message.from, message.to, message.meetingId, message.kind, JSON.stringify(message.payload ?? {})],
   );
   return Number(result.rows[0]?.id ?? 0);
 }
 
-export async function listSignals(userId: string, afterId: number) {
+export async function listSignals(userId: string, afterId: number, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
@@ -366,11 +445,12 @@ export async function listSignals(userId: string, afterId: number) {
     `SELECT id, from_id, to_id, meeting_id, kind, payload,
             (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms
        FROM realtime_signals
-      WHERE id > $1
-        AND (to_id = $2 OR to_id = '*')
+      WHERE office_id = $1
+        AND id > $2
+        AND (to_id = $3 OR to_id = '*')
       ORDER BY id ASC
       LIMIT 200`,
-    [afterId, userId],
+    [officeId, afterId, userId],
   );
 
   return result.rows.map((row) => ({
@@ -384,19 +464,19 @@ export async function listSignals(userId: string, afterId: number) {
   })) satisfies StoredSignalMessage[];
 }
 
-export async function latestSignalId() {
+export async function latestSignalId(officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
-  const result = await pool.query<{ id: string }>("SELECT COALESCE(MAX(id), 0)::bigint AS id FROM realtime_signals");
+  const result = await pool.query<{ id: string }>("SELECT COALESCE(MAX(id), 0)::bigint AS id FROM realtime_signals WHERE office_id = $1", [officeId]);
   return Number(result.rows[0]?.id ?? 0);
 }
 
-export async function latestChatId() {
+export async function latestChatId(officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
-  const result = await pool.query<{ id: string }>("SELECT COALESCE(MAX(id), 0)::bigint AS id FROM chat_messages");
+  const result = await pool.query<{ id: string }>("SELECT COALESCE(MAX(id), 0)::bigint AS id FROM chat_messages WHERE office_id = $1", [officeId]);
   return Number(result.rows[0]?.id ?? 0);
 }
 
@@ -407,22 +487,24 @@ export async function createChatMessage(message: Omit<StoredChatMessage, "id" | 
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     channel_id: string;
     from_id: string;
     from_name: string;
     body: string;
     created_at_ms: string;
   }>(
-    `INSERT INTO chat_messages (channel_id, from_id, from_name, body)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, channel_id, from_id, from_name, body,
+    `INSERT INTO chat_messages (office_id, channel_id, from_id, from_name, body)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, office_id, channel_id, from_id, from_name, body,
                (EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS created_at_ms`,
-    [message.channelId, message.fromId, message.fromName, message.body],
+    [message.officeId, message.channelId, message.fromId, message.fromName, message.body],
   );
 
   const row = result.rows[0];
   return {
     id: Number(row.id),
+    officeId: row.office_id,
     channelId: row.channel_id,
     fromId: row.from_id,
     fromName: row.from_name,
@@ -431,27 +513,27 @@ export async function createChatMessage(message: Omit<StoredChatMessage, "id" | 
   } satisfies StoredChatMessage;
 }
 
-export async function saveEmployeePosition(employeeId: string, position: { x: number; y: number }) {
+export async function saveEmployeePosition(employeeId: string, position: { x: number; y: number }, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
   await pool.query(
-    `INSERT INTO employee_positions (employee_id, x, y)
-     VALUES ($1, $2, $3)
+    `INSERT INTO employee_positions (employee_id, office_id, x, y)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (employee_id)
-     DO UPDATE SET x = EXCLUDED.x, y = EXCLUDED.y, updated_at = now()`,
-    [employeeId, position.x, position.y],
+     DO UPDATE SET office_id = EXCLUDED.office_id, x = EXCLUDED.x, y = EXCLUDED.y, updated_at = now()`,
+    [employeeId, officeId, position.x, position.y],
   );
   return true;
 }
 
-export async function getEmployeePosition(employeeId: string) {
+export async function getEmployeePosition(employeeId: string, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
   const result = await pool.query<{ x: number; y: number }>(
-    "SELECT x, y FROM employee_positions WHERE employee_id = $1",
-    [employeeId],
+    "SELECT x, y FROM employee_positions WHERE employee_id = $1 AND office_id = $2",
+    [employeeId, officeId],
   );
   const row = result.rows[0];
   return row ? { x: row.x, y: row.y } : null;
@@ -459,6 +541,7 @@ export async function getEmployeePosition(employeeId: string) {
 
 function mapCalendarRow(row: {
   id: string;
+  office_id?: string;
   title: string;
   description: string;
   room_id: string;
@@ -473,6 +556,7 @@ function mapCalendarRow(row: {
 }) {
   return {
     id: Number(row.id),
+    officeId: row.office_id ?? DEFAULT_OFFICE_ID,
     title: row.title,
     description: row.description,
     roomId: row.room_id,
@@ -487,14 +571,15 @@ function mapCalendarRow(row: {
   } satisfies StoredCalendarEvent;
 }
 
-export async function listCalendarEvents(rangeStart: string, rangeEnd: string, roomId?: string | null) {
+export async function listCalendarEvents(rangeStart: string, rangeEnd: string, roomId?: string | null, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
 
-  const params = roomId ? [rangeStart, rangeEnd, roomId] : [rangeStart, rangeEnd];
+  const params = roomId ? [officeId, rangeStart, rangeEnd, roomId] : [officeId, rangeStart, rangeEnd];
   const result = await pool.query<{
     id: string;
+    office_id: string;
     title: string;
     description: string;
     room_id: string;
@@ -507,11 +592,12 @@ export async function listCalendarEvents(rangeStart: string, rangeEnd: string, r
     live_ended_at: Date | null;
     created_at: Date;
   }>(
-    `SELECT id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
+    `SELECT id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
        FROM calendar_events
-      WHERE start_at < $2::timestamptz
-        AND end_at > $1::timestamptz
-        ${roomId ? "AND room_id = $3" : ""}
+      WHERE office_id = $1
+        AND start_at < $3::timestamptz
+        AND end_at > $2::timestamptz
+        ${roomId ? "AND room_id = $4" : ""}
       ORDER BY start_at ASC`,
     params,
   );
@@ -526,6 +612,7 @@ export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" 
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     title: string;
     description: string;
     room_id: string;
@@ -538,22 +625,23 @@ export async function createCalendarEvent(event: Omit<StoredCalendarEvent, "id" 
     live_ended_at: Date | null;
     created_at: Date;
   }>(
-    `INSERT INTO calendar_events (title, description, room_id, room_name, start_at, end_at, creator_id, creator_name)
-     VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz, $7, $8)
-     RETURNING id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
-    [event.title, event.description, event.roomId, event.roomName, event.startAt, event.endAt, event.creatorId, event.creatorName],
+    `INSERT INTO calendar_events (office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name)
+     VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8, $9)
+     RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+    [event.officeId, event.title, event.description, event.roomId, event.roomName, event.startAt, event.endAt, event.creatorId, event.creatorName],
   );
 
   return mapCalendarRow(result.rows[0]);
 }
 
-export async function startCalendarEvent(eventId: number, creatorId: string) {
+export async function startCalendarEvent(eventId: number, creatorId: string, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     title: string;
     description: string;
     room_id: string;
@@ -570,21 +658,23 @@ export async function startCalendarEvent(eventId: number, creatorId: string) {
         SET live_started_at = COALESCE(live_started_at, now()),
             live_ended_at = NULL
       WHERE id = $1 AND creator_id = $2
+        AND office_id = $3
         AND live_ended_at IS NULL
-      RETURNING id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
-    [eventId, creatorId],
+      RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+    [eventId, creatorId, officeId],
   );
 
   return result.rows[0] ? mapCalendarRow(result.rows[0]) : null;
 }
 
-export async function endCalendarEvent(eventId: number, creatorId: string) {
+export async function endCalendarEvent(eventId: number, creatorId: string, officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     title: string;
     description: string;
     room_id: string;
@@ -601,9 +691,10 @@ export async function endCalendarEvent(eventId: number, creatorId: string) {
         SET live_ended_at = COALESCE(live_ended_at, now())
       WHERE id = $1
         AND creator_id = $2
+        AND office_id = $3
         AND live_started_at IS NOT NULL
-      RETURNING id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
-    [eventId, creatorId],
+      RETURNING id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at`,
+    [eventId, creatorId, officeId],
   );
 
   return result.rows[0] ? mapCalendarRow(result.rows[0]) : null;
@@ -611,6 +702,7 @@ export async function endCalendarEvent(eventId: number, creatorId: string) {
 
 function mapNotificationRow(row: {
   id: string;
+  office_id?: string;
   event_id: string;
   type: StoredNotification["type"];
   title: string;
@@ -622,6 +714,7 @@ function mapNotificationRow(row: {
 }) {
   return {
     id: Number(row.id),
+    officeId: row.office_id ?? DEFAULT_OFFICE_ID,
     eventId: Number(row.event_id),
     type: row.type,
     title: row.title,
@@ -655,6 +748,7 @@ export async function createEventNotification(event: StoredCalendarEvent, type: 
   const result = await pool.query<{
     id: string;
     event_id: string;
+    office_id: string;
     type: StoredNotification["type"];
     title: string;
     body: string;
@@ -663,23 +757,24 @@ export async function createEventNotification(event: StoredCalendarEvent, type: 
     created_at: Date;
     read_at: Date | null;
   }>(
-    `INSERT INTO notifications (event_id, type, title, body, room_name, event_start_at)
-     VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
+    `INSERT INTO notifications (office_id, event_id, type, title, body, room_name, event_start_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::timestamptz)
      ON CONFLICT (event_id, type) DO NOTHING
-     RETURNING id, event_id, type, title, body, room_name, event_start_at, created_at, read_at`,
-    [event.id, type, label, body, event.roomName, event.startAt],
+     RETURNING id, office_id, event_id, type, title, body, room_name, event_start_at, created_at, read_at`,
+    [event.officeId, event.id, type, label, body, event.roomName, event.startAt],
   );
 
   return result.rows[0] ? mapNotificationRow(result.rows[0]) : null;
 }
 
-export async function generateDueNotifications() {
+export async function generateDueNotifications(officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     title: string;
     description: string;
     room_id: string;
@@ -692,10 +787,12 @@ export async function generateDueNotifications() {
     live_ended_at: Date | null;
     created_at: Date;
   }>(
-    `SELECT id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
+    `SELECT id, office_id, title, description, room_id, room_name, start_at, end_at, creator_id, creator_name, live_started_at, live_ended_at, created_at
        FROM calendar_events
-      WHERE start_at > now()
+      WHERE office_id = $1
+        AND start_at > now()
         AND start_at <= now() + interval '1 day'`,
+    [officeId],
   );
 
   const created: StoredNotification[] = [];
@@ -716,14 +813,15 @@ export async function generateDueNotifications() {
   return created;
 }
 
-export async function listNotifications() {
+export async function listNotifications(officeId = DEFAULT_OFFICE_ID) {
   const pool = getPool();
   if (!pool) return null;
   await ensureDatabase();
-  await generateDueNotifications();
+  await generateDueNotifications(officeId);
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     event_id: string;
     type: StoredNotification["type"];
     title: string;
@@ -733,10 +831,12 @@ export async function listNotifications() {
     created_at: Date;
     read_at: Date | null;
   }>(
-    `SELECT id, event_id, type, title, body, room_name, event_start_at, created_at, read_at
+    `SELECT id, office_id, event_id, type, title, body, room_name, event_start_at, created_at, read_at
        FROM notifications
+      WHERE office_id = $1
       ORDER BY read_at ASC NULLS FIRST, created_at DESC
       LIMIT 100`,
+    [officeId],
   );
 
   return result.rows.map(mapNotificationRow);
@@ -749,6 +849,7 @@ export async function markNotificationRead(notificationId: number) {
 
   const result = await pool.query<{
     id: string;
+    office_id: string;
     event_id: string;
     type: StoredNotification["type"];
     title: string;
@@ -761,11 +862,149 @@ export async function markNotificationRead(notificationId: number) {
     `UPDATE notifications
         SET read_at = COALESCE(read_at, now())
       WHERE id = $1
-      RETURNING id, event_id, type, title, body, room_name, event_start_at, created_at, read_at`,
+      RETURNING id, office_id, event_id, type, title, body, room_name, event_start_at, created_at, read_at`,
     [notificationId],
   );
 
   return result.rows[0] ? mapNotificationRow(result.rows[0]) : null;
+}
+
+function mapOfficeRow(row: {
+  id: string;
+  code: string;
+  name: string;
+  creator_id: string;
+  role: StoredOffice["role"];
+  created_at: Date;
+}) {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    creatorId: row.creator_id,
+    role: row.role,
+    createdAt: row.created_at.toISOString(),
+  } satisfies StoredOffice;
+}
+
+function createOfficeCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let index = 0; index < 8; index += 1) {
+    code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return code;
+}
+
+export async function listUserOffices(userId: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+
+  const result = await pool.query<{
+    id: string;
+    code: string;
+    name: string;
+    creator_id: string;
+    role: StoredOffice["role"];
+    created_at: Date;
+  }>(
+    `SELECT offices.id, offices.code, offices.name, offices.creator_id, office_members.role, offices.created_at
+       FROM office_members
+       JOIN offices ON offices.id = office_members.office_id
+      WHERE office_members.user_id = $1
+      ORDER BY office_members.joined_at DESC`,
+    [userId],
+  );
+
+  return result.rows.map(mapOfficeRow);
+}
+
+export async function createOfficeForUser(user: Pick<AuthUser, "id">, name: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const id = randomUUID();
+    const code = createOfficeCode();
+    try {
+      const result = await pool.query<{
+        id: string;
+        code: string;
+        name: string;
+        creator_id: string;
+        role: StoredOffice["role"];
+        created_at: Date;
+      }>(
+        `WITH created_office AS (
+           INSERT INTO offices (id, code, name, creator_id)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, code, name, creator_id, created_at
+         ),
+         created_member AS (
+           INSERT INTO office_members (office_id, user_id, role)
+           SELECT id, $4, 'owner' FROM created_office
+           RETURNING role
+         )
+         SELECT created_office.id, created_office.code, created_office.name, created_office.creator_id, created_member.role, created_office.created_at
+           FROM created_office, created_member`,
+        [id, code, name.slice(0, 100), user.id],
+      );
+      return result.rows[0] ? mapOfficeRow(result.rows[0]) : null;
+    } catch (error) {
+      if (attempt === 4) throw error;
+    }
+  }
+
+  return null;
+}
+
+export async function joinOfficeForUser(user: Pick<AuthUser, "id">, code: string) {
+  const pool = getPool();
+  if (!pool) return null;
+  await ensureDatabase();
+
+  const result = await pool.query<{
+    id: string;
+    code: string;
+    name: string;
+    creator_id: string;
+    role: StoredOffice["role"];
+    created_at: Date;
+  }>(
+    `WITH target_office AS (
+       SELECT id, code, name, creator_id, created_at
+         FROM offices
+        WHERE code = $1
+     ),
+     joined_member AS (
+       INSERT INTO office_members (office_id, user_id, role)
+       SELECT id, $2, CASE WHEN creator_id = $2 THEN 'owner' ELSE 'member' END
+         FROM target_office
+       ON CONFLICT (office_id, user_id) DO UPDATE SET role = office_members.role
+       RETURNING office_id, role
+     )
+     SELECT target_office.id, target_office.code, target_office.name, target_office.creator_id, joined_member.role, target_office.created_at
+       FROM target_office
+       JOIN joined_member ON joined_member.office_id = target_office.id`,
+    [code.trim().toUpperCase(), user.id],
+  );
+
+  return result.rows[0] ? mapOfficeRow(result.rows[0]) : null;
+}
+
+export async function isOfficeMember(userId: string, officeId: string) {
+  const pool = getPool();
+  if (!pool) return false;
+  await ensureDatabase();
+  const result = await pool.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM office_members WHERE user_id = $1 AND office_id = $2
+     ) AS exists`,
+    [userId, officeId],
+  );
+  return Boolean(result.rows[0]?.exists);
 }
 
 function mapAuthUser(row: {
