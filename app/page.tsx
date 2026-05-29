@@ -1,6 +1,7 @@
 "use client";
 
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
 import { AtSign, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, CircleEllipsis, Clock3, Edit3, Gift, Hash, Lock, Map, MessageCircle, Network, Plus, RotateCw, Search, Send, Settings, Video, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
@@ -44,14 +45,11 @@ type ActiveMeeting = {
   participants: Person[];
   signal: string;
 } | null;
-type SignalMessage = {
-  id: number;
-  from: string;
-  to: string;
-  meetingId: string;
-  kind: "offer" | "answer" | "ice" | "leave";
-  payload: RTCSessionDescriptionInit | RTCIceCandidateInit | Record<string, never>;
-};
+type LiveKitConnection = {
+  serverUrl: string;
+  token: string;
+  roomName: string;
+} | null;
 type ChatMessage = {
   id: number;
   channelId: string;
@@ -132,9 +130,6 @@ const ROWS = 33;
 const avatarStorageKey = (employeeId: string) => `gather.avatar.position:${employeeId}`;
 const SKINS = ["001", "004", "012", "028", "043", "053", "067", "072", "079"];
 const SIGNAL_URL = "/api/realtime";
-const RTC_CONFIGURATION: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
 
 const meetingZones: MeetingZone[] = [
   { id: "left-meet", name: "Left Meeting Room", x: 8, y: 3, w: 7, h: 10 },
@@ -392,8 +387,7 @@ export default function Home() {
   const [muted, setMuted] = useState(true);
   const [cameraOff, setCameraOff] = useState(true);
   const [remoteUsers, setRemoteUsers] = useState<Person[]>([]);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [liveKitConnection, setLiveKitConnection] = useState<LiveKitConnection>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState(`room:${meetingZones[0].id}`);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -413,11 +407,7 @@ export default function Home() {
   const unreadNotificationCount = notifications.filter((notification) => !notification.readAt).length;
   const pathRef = useRef<Point[]>([]);
   const cameraRef = useRef<HTMLDivElement | null>(null);
-  const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
-  const peerSendersRef = useRef<Record<string, { audio: RTCRtpSender; video: RTCRtpSender }>>({});
-  const localStreamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<EmployeeSession | null>(null);
-  const activeMeetingIdRef = useRef<string | null>(null);
   const lastSignalIdRef = useRef(0);
   const lastChatIdRef = useRef(0);
 
@@ -538,13 +528,7 @@ export default function Home() {
         body: JSON.stringify({ type: "leave", userId: current.id }),
       }).catch(() => undefined);
     }
-    Object.values(peerConnectionsRef.current).forEach((pc) => pc.close());
-    peerConnectionsRef.current = {};
-    peerSendersRef.current = {};
-    localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    localStreamRef.current = null;
-    setLocalStream(null);
-    setRemoteStreams({});
+    setLiveKitConnection(null);
     setRemoteUsers([]);
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
     setSession(null);
@@ -725,165 +709,7 @@ export default function Home() {
 
     return null;
   }, [avatar, currentZone, remoteUsers, session]);
-
-  useEffect(() => {
-    activeMeetingIdRef.current = activeMeeting?.id ?? null;
-  }, [activeMeeting?.id]);
-
-  const sendSignal = useCallback(async (message: Omit<SignalMessage, "id">) => {
-    await fetch(SIGNAL_URL, {
-      method: "POST",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "signal", message }),
-    });
-  }, []);
-
-  const ensureLocalStream = useCallback(async () => {
-    if (!window.isSecureContext) {
-      setMediaError("Camera and microphone require HTTPS on another device. Use localhost on this machine or open the app through an HTTPS tunnel/deployment.");
-      return null;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMediaError("This browser cannot access camera/mic media.");
-      return null;
-    }
-
-    const stream = localStreamRef.current ?? new MediaStream();
-    const needsAudio = !muted && stream.getAudioTracks().length === 0;
-    const needsVideo = !cameraOff && stream.getVideoTracks().length === 0;
-
-    try {
-      if (needsAudio || needsVideo) {
-        const freshStream = await navigator.mediaDevices.getUserMedia({ audio: needsAudio, video: needsVideo });
-        freshStream.getTracks().forEach((track) => stream.addTrack(track));
-      }
-      stream.getAudioTracks().forEach((track) => { track.enabled = !muted; });
-      stream.getVideoTracks().forEach((track) => { track.enabled = !cameraOff; });
-      localStreamRef.current = stream;
-      setLocalStream(stream.getTracks().length ? new MediaStream(stream.getTracks()) : null);
-      setMediaError(null);
-      return stream;
-    } catch {
-      setMediaError("Camera or microphone permission is blocked.");
-      return null;
-    }
-  }, [cameraOff, muted]);
-
-  const syncPeerTracks = useCallback((remoteId: string, stream: MediaStream | null) => {
-    const senders = peerSendersRef.current[remoteId];
-    if (!senders) return;
-    const audioTrack = stream?.getAudioTracks()[0] ?? null;
-    const videoTrack = stream?.getVideoTracks()[0] ?? null;
-    void senders.audio.replaceTrack(audioTrack).catch(() => undefined);
-    void senders.video.replaceTrack(videoTrack).catch(() => undefined);
-  }, []);
-
-  const stopLocalTracks = useCallback((kind: "audio" | "video") => {
-    const stream = localStreamRef.current;
-    if (!stream) return;
-
-    stream.getTracks()
-      .filter((track) => track.kind === kind)
-      .forEach((track) => {
-        track.stop();
-        stream.removeTrack(track);
-      });
-
-    Object.values(peerConnectionsRef.current).forEach((pc) => {
-      pc.getSenders()
-        .filter((sender) => sender.track?.kind === kind)
-        .forEach((sender) => { void sender.replaceTrack(null); });
-    });
-
-    setLocalStream(stream.getTracks().length ? new MediaStream(stream.getTracks()) : null);
-  }, []);
-
-  const getPeerConnection = useCallback((remoteId: string) => {
-    const existing = peerConnectionsRef.current[remoteId];
-    const currentSession = sessionRef.current;
-    if (existing || !currentSession) return existing;
-
-    const pc = new RTCPeerConnection(RTC_CONFIGURATION);
-    peerConnectionsRef.current[remoteId] = pc;
-    const audioSender = pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
-    const videoSender = pc.addTransceiver("video", { direction: "sendrecv" }).sender;
-    peerSendersRef.current[remoteId] = { audio: audioSender, video: videoSender };
-    syncPeerTracks(remoteId, localStreamRef.current);
-
-    pc.onicecandidate = (event) => {
-      if (!event.candidate || !activeMeetingIdRef.current) return;
-      void sendSignal({
-        from: currentSession.id,
-        to: remoteId,
-        meetingId: activeMeetingIdRef.current,
-        kind: "ice",
-        payload: event.candidate.toJSON(),
-      });
-    };
-
-    pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) return;
-      setRemoteStreams((current) => ({ ...current, [remoteId]: stream }));
-    };
-
-    pc.onconnectionstatechange = () => {
-      if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
-        setRemoteStreams((current) => {
-          const next = { ...current };
-          delete next[remoteId];
-          return next;
-        });
-      }
-    };
-
-    return pc;
-  }, [sendSignal, syncPeerTracks]);
-
-  const closePeer = useCallback((remoteId: string) => {
-    peerConnectionsRef.current[remoteId]?.close();
-    delete peerConnectionsRef.current[remoteId];
-    delete peerSendersRef.current[remoteId];
-    setRemoteStreams((current) => {
-      const next = { ...current };
-      delete next[remoteId];
-      return next;
-    });
-  }, []);
-
-  const processSignal = useCallback(async (message: SignalMessage) => {
-    const currentSession = sessionRef.current;
-    if (!currentSession || message.from === currentSession.id) return;
-
-    if (message.kind === "leave") {
-      closePeer(message.from);
-      return;
-    }
-
-    if (message.meetingId !== activeMeetingIdRef.current) return;
-    const pc = getPeerConnection(message.from);
-    if (!pc) return;
-
-    if (message.kind === "offer") {
-      const stream = await ensureLocalStream();
-      syncPeerTracks(message.from, stream);
-      await pc.setRemoteDescription(message.payload as RTCSessionDescriptionInit);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await sendSignal({ from: currentSession.id, to: message.from, meetingId: message.meetingId, kind: "answer", payload: answer });
-      return;
-    }
-
-    if (message.kind === "answer" && pc.signalingState !== "stable") {
-      await pc.setRemoteDescription(message.payload as RTCSessionDescriptionInit);
-      return;
-    }
-
-    if (message.kind === "ice") {
-      await pc.addIceCandidate(message.payload as RTCIceCandidateInit).catch(() => undefined);
-    }
-  }, [closePeer, ensureLocalStream, getPeerConnection, sendSignal, syncPeerTracks]);
+  const activeMeetingRoomName = activeMeeting?.id ?? null;
 
   useEffect(() => {
     if (!session) return;
@@ -930,10 +756,9 @@ export default function Home() {
       const query = new URLSearchParams({ userId: currentSession.id, after: String(lastSignalIdRef.current) });
       const response = await fetch(`${SIGNAL_URL}?${query.toString()}`, { cache: "no-store" }).catch(() => null);
       if (!response?.ok || stopped) return;
-      const data = await response.json() as { users: Person[]; signals: SignalMessage[]; latestSignalId: number };
+      const data = await response.json() as { users: Person[]; latestSignalId: number };
       setRemoteUsers(data.users.filter((user) => user.id !== currentSession.id));
       lastSignalIdRef.current = data.latestSignalId;
-      for (const signal of data.signals) await processSignal(signal);
     }
 
     void poll();
@@ -944,7 +769,7 @@ export default function Home() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [processSignal, session]);
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -1245,54 +1070,32 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!activeMeeting || !session) {
-      Object.keys(peerConnectionsRef.current).forEach(closePeer);
-      return;
+    if (!activeMeetingRoomName || !session) return;
+
+    let stopped = false;
+
+    async function loadLiveKitToken() {
+      const response = await fetch("/api/livekit/token", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomName: activeMeetingRoomName }),
+      }).catch(() => null);
+      if (stopped) return;
+      if (!response?.ok) {
+        setMediaError("Could not connect to the media server.");
+        return;
+      }
+      const data = await response.json() as LiveKitConnection;
+      setMediaError(null);
+      setLiveKitConnection(data);
     }
 
-    const meeting = activeMeeting;
-    const currentSession = session;
-    const participantIds = new Set(meeting.participants.map((person) => person.id));
-    Object.keys(peerConnectionsRef.current).forEach((remoteId) => {
-      if (!participantIds.has(remoteId)) closePeer(remoteId);
-    });
-
-    async function connectParticipants() {
-      const stream = await ensureLocalStream();
-      for (const participant of meeting.participants) {
-        const pc = getPeerConnection(participant.id);
-        if (!pc) continue;
-        syncPeerTracks(participant.id, stream);
-        if (currentSession.id < participant.id && pc.signalingState === "stable" && !pc.localDescription) {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          await sendSignal({ from: currentSession.id, to: participant.id, meetingId: meeting.id, kind: "offer", payload: offer });
-        }
-      }
-    }
-
-    void connectParticipants();
-  }, [activeMeeting, closePeer, ensureLocalStream, getPeerConnection, sendSignal, session, syncPeerTracks]);
-
-  useEffect(() => {
-    if (muted) stopLocalTracks("audio");
-    if (cameraOff) stopLocalTracks("video");
-    const timer = window.setTimeout(() => {
-      if ((!muted || !cameraOff) && activeMeeting) {
-        void ensureLocalStream().then((stream) => {
-          Object.keys(peerConnectionsRef.current).forEach((remoteId) => syncPeerTracks(remoteId, stream));
-        });
-      } else {
-        Object.keys(peerConnectionsRef.current).forEach((remoteId) => syncPeerTracks(remoteId, localStreamRef.current));
-      }
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [activeMeeting, cameraOff, ensureLocalStream, muted, stopLocalTracks, syncPeerTracks]);
-
-  useEffect(() => () => {
-    Object.values(peerConnectionsRef.current).forEach((pc) => pc.close());
-    localStreamRef.current?.getTracks().forEach((track) => track.stop());
-  }, []);
+    void loadLiveKitToken();
+    return () => {
+      stopped = true;
+    };
+  }, [activeMeetingRoomName, session]);
 
   return (
     <>
@@ -1407,7 +1210,7 @@ export default function Home() {
                 <button className="control">Smile</button><button className="control">Wave</button><button className="control">Share</button>
               </div>
               <div className="map-overlay coordinates"><span>x {avatar.x}, y {avatar.y}</span><span>Press G for ghost</span></div>
-              <MeetingPanel activeMeeting={activeMeeting} displayName={displayName} localSkin={session?.skin ?? "001"} muted={muted} cameraOff={cameraOff} localStream={localStream} remoteStreams={remoteStreams} mediaError={mediaError} />
+              <MeetingPanel activeMeeting={activeMeeting} cameraOff={cameraOff} liveKitConnection={liveKitConnection?.roomName === activeMeeting?.id ? liveKitConnection : null} mediaError={mediaError} muted={muted} />
               {activeNpc && activeNpcZone ? (
                 <NpcAssistantPanel
                   draft={npcDraft}
@@ -1615,21 +1418,15 @@ function NpcAssistantPanel({
 
 function MeetingPanel({
   activeMeeting,
-  displayName,
-  localSkin,
   muted,
   cameraOff,
-  localStream,
-  remoteStreams,
+  liveKitConnection,
   mediaError,
 }: {
   activeMeeting: ActiveMeeting;
-  displayName: string;
-  localSkin: string;
   muted: boolean;
   cameraOff: boolean;
-  localStream: MediaStream | null;
-  remoteStreams: Record<string, MediaStream>;
+  liveKitConnection: LiveKitConnection;
   mediaError: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -1661,12 +1458,27 @@ function MeetingPanel({
       </div>
 
       {mediaError ? <p className="media-error">{mediaError}</p> : null}
-      <div className="meeting-grid">
-        <ParticipantTile name={displayName} skin={localSkin} label={muted ? "You · muted" : "You · live"} active={!cameraOff} stream={localStream} muted />
-        {activeMeeting.participants.map((person) => (
-          <ParticipantTile key={person.id} name={person.name} skin={person.skin} label={person.status} active stream={remoteStreams[person.id]} />
-        ))}
-      </div>
+      {liveKitConnection ? (
+        <LiveKitRoom
+          audio={!muted}
+          className="livekit-meeting-room"
+          connect
+          data-lk-theme="default"
+          onDisconnected={() => undefined}
+          onError={(error) => console.error(error)}
+          serverUrl={liveKitConnection.serverUrl}
+          token={liveKitConnection.token}
+          video={!cameraOff}
+        >
+          <LiveKitDeviceSync cameraOff={cameraOff} muted={muted} />
+          <VideoConference />
+        </LiveKitRoom>
+      ) : (
+        <div className="meeting-grid meeting-loading">
+          <span className="participant-avatar" />
+          <strong>Connecting media...</strong>
+        </div>
+      )}
 
       <div className="meeting-footer">
         <span>{activeMeeting.signal}</span>
@@ -1677,39 +1489,18 @@ function MeetingPanel({
   );
 }
 
-function ParticipantTile({
-  name,
-  skin,
-  label,
-  active,
-  stream,
-  muted,
-}: {
-  name: string;
-  skin: string;
-  label: string;
-  active: boolean;
-  stream?: MediaStream | null;
-  muted?: boolean;
-}) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+function LiveKitDeviceSync({ muted, cameraOff }: { muted: boolean; cameraOff: boolean }) {
+  const { localParticipant } = useLocalParticipant();
 
   useEffect(() => {
-    if (!videoRef.current) return;
-    videoRef.current.srcObject = stream ?? null;
-  }, [stream]);
+    void localParticipant.setMicrophoneEnabled(!muted).catch(() => undefined);
+  }, [localParticipant, muted]);
 
-  return (
-    <div className={active ? "participant-tile participant-active" : "participant-tile"}>
-      {stream ? (
-        <video className="participant-video" ref={videoRef} autoPlay playsInline muted={muted} />
-      ) : (
-        <span className="participant-avatar" style={{ backgroundImage: `url(/sprites/characters/Character_${skin}.png)` }} />
-      )}
-      <strong>{name}</strong>
-      <small>{label}</small>
-    </div>
-  );
+  useEffect(() => {
+    void localParticipant.setCameraEnabled(!cameraOff).catch(() => undefined);
+  }, [cameraOff, localParticipant]);
+
+  return null;
 }
 
 function AuthDialog({

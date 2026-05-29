@@ -1534,6 +1534,41 @@ kbd {
   padding-right: 2px;
 }
 
+.livekit-meeting-room {
+  height: 220px;
+  margin-top: 11px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #111;
+}
+
+.meeting-panel-expanded .livekit-meeting-room {
+  height: calc(100vh - 126px);
+  margin-top: 0;
+  border-radius: 10px;
+}
+
+.livekit-meeting-room .lk-video-conference {
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+}
+
+.livekit-meeting-room .lk-grid-layout-wrapper {
+  min-height: 0;
+}
+
+.livekit-meeting-room .lk-control-bar {
+  border-radius: 14px;
+}
+
+.meeting-loading {
+  place-items: center;
+  min-height: 120px;
+  color: #58606a;
+  font-size: 13px;
+}
+
 .meeting-panel-expanded .participant-tile {
   position: relative;
   min-height: 260px;
