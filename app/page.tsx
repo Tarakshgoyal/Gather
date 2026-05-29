@@ -1,14 +1,14 @@
 "use client";
 
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Gift, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
+import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
 type Floor = "grass" | "wood" | "blue" | "gray" | "sand" | "rug" | "wall";
 type MeetingMode = "room" | "proximity";
-type RailTool = "gather" | "search" | "map" | "chat" | "calendar" | "notifications";
+type RailTool = "gather" | "search" | "map" | "chat" | "calendar" | "notifications" | "settings";
 type MeetingZone = {
   id: string;
   name: string;
@@ -392,6 +392,7 @@ export default function Home() {
   const [selectedChannelId, setSelectedChannelId] = useState(`room:${meetingZones[0].id}`);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
+  const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarRoomId, setCalendarRoomId] = useState("all");
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -608,19 +609,27 @@ export default function Home() {
     camera.scrollTop = 0;
   }, []);
 
-  const showOfficeMap = useCallback(() => {
-    setActiveTool("map");
+  const scrollCameraToPoint = useCallback((point: Point) => {
     const camera = cameraRef.current;
     if (!camera) return;
 
-    const targetLeft = avatar.x * TILE - camera.clientWidth / 2 + TILE / 2;
-    const targetTop = avatar.y * TILE - camera.clientHeight / 2 + TILE / 2;
+    const targetLeft = point.x * TILE - camera.clientWidth / 2 + TILE / 2;
+    const targetTop = point.y * TILE - camera.clientHeight / 2 + TILE / 2;
     camera.scrollTo({
       left: Math.max(0, targetLeft),
       top: Math.max(0, targetTop),
       behavior: "smooth",
     });
-  }, [avatar]);
+  }, []);
+
+  const showOfficeMap = useCallback(() => {
+    setActiveTool("map");
+    scrollCameraToPoint(avatar);
+  }, [avatar, scrollCameraToPoint]);
+
+  const locateEmployee = useCallback((point: Point) => {
+    scrollCameraToPoint(point);
+  }, [scrollCameraToPoint]);
 
   const nearest = useMemo(() => remoteUsers
     .map((person) => ({ ...person, range: distance(person.position, avatar) }))
@@ -1111,7 +1120,7 @@ export default function Home() {
           submitAuth={submitAuth}
         />
       ) : null}
-      <main className={activeTool === "calendar" || activeTool === "notifications" ? "gather-shell calendar-shell" : "gather-shell"}>
+      <main className={activeTool === "calendar" || activeTool === "notifications" || activeTool === "settings" ? "gather-shell calendar-shell" : "gather-shell"}>
         <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onSelectTool={setActiveTool} onShowMap={showOfficeMap} />
         {activeTool === "chat" ? (
           <ChatWorkspace
@@ -1149,26 +1158,47 @@ export default function Home() {
           />
         ) : activeTool === "notifications" ? (
           <NotificationsWorkspace notifications={notifications} onMarkAsRead={markNotificationAsRead} />
+        ) : activeTool === "settings" ? (
+          <SettingsWorkspace
+            cameraOff={cameraOff}
+            muted={muted}
+            onShowMap={showOfficeMap}
+            session={session}
+            setCameraOff={setCameraOff}
+            setMuted={setMuted}
+          />
         ) : (
           <>
-            <aside className="people-drawer">
-              <div className="drawer-top"><h1>abcde</h1><button aria-label="Collapse sidebar" className="tiny-icon">||</button></div>
-              <section className="invite-panel">
-                <h2>Experience Gather together</h2>
-                <p>Invite your closest collaborators.</p>
-                <div className="invite-faces">{["A", "B", "C", "D", "E"].map((face, index) => <span aria-hidden="true" className={`invite-face face-${index}`} key={face}><span /></span>)}</div>
-                <button className="invite-button"><span>Invite</span><span className="copy-mark">link</span></button>
-              </section>
-              <label className="search-box account-box">
-                <input aria-label="Employee name" disabled placeholder="Sign in as an employee" value={session?.name ?? ""} />
-                {session ? <button className="signout-button" onClick={signOut}>Sign out</button> : null}
-              </label>
-              <section className="online-list">
-                <button className="online-heading">Online ({remoteUsers.length + (session ? 1 : 0)})</button>
-                {session ? <PersonRow name={displayName} status={activeMeeting?.title ?? "Active"} tone="self" /> : null}
-                {remoteUsers.map((person) => <PersonRow key={person.id} name={person.name} status={person.status} tone={person.skin} />)}
-              </section>
-            </aside>
+            {activeTool === "search" ? (
+              <EmployeeSearchDrawer
+                avatar={avatar}
+                query={employeeSearchQuery}
+                locateEmployee={locateEmployee}
+                remoteUsers={remoteUsers}
+                session={session}
+                setQuery={setEmployeeSearchQuery}
+                showOfficeMap={showOfficeMap}
+              />
+            ) : (
+              <aside className="people-drawer">
+                <div className="drawer-top"><h1>abcde</h1><button aria-label="Collapse sidebar" className="tiny-icon" type="button">||</button></div>
+                <section className="invite-panel">
+                  <h2>Experience Gather together</h2>
+                  <p>Invite your closest collaborators.</p>
+                  <div className="invite-faces">{["A", "B", "C", "D", "E"].map((face, index) => <span aria-hidden="true" className={`invite-face face-${index}`} key={face}><span /></span>)}</div>
+                  <button className="invite-button" type="button"><span>Invite</span><span className="copy-mark">link</span></button>
+                </section>
+                <label className="search-box account-box">
+                  <input aria-label="Employee name" disabled placeholder="Sign in as an employee" value={session?.name ?? ""} />
+                  {session ? <button className="signout-button" onClick={signOut} type="button">Sign out</button> : null}
+                </label>
+                <section className="online-list">
+                  <button className="online-heading" type="button">Online ({remoteUsers.length + (session ? 1 : 0)})</button>
+                  {session ? <PersonRow name={displayName} status={activeMeeting?.title ?? "Active"} tone="self" /> : null}
+                  {remoteUsers.map((person) => <PersonRow key={person.id} name={person.name} status={person.status} tone={person.skin} />)}
+                </section>
+              </aside>
+            )}
 
             <section className="world-viewport" aria-label="Office game world">
               <div className="office-camera" ref={cameraRef}>
@@ -1425,6 +1455,125 @@ function NpcAssistantPanel({
         <button disabled={!session} type="submit"><Plus size={17} /> Create meeting</button>
       </form>
     </aside>
+  );
+}
+
+function EmployeeSearchDrawer({
+  avatar,
+  locateEmployee,
+  query,
+  remoteUsers,
+  session,
+  setQuery,
+  showOfficeMap,
+}: {
+  avatar: Point;
+  locateEmployee: (point: Point) => void;
+  query: string;
+  remoteUsers: Person[];
+  session: EmployeeSession | null;
+  setQuery: (query: string) => void;
+  showOfficeMap: () => void;
+}) {
+  const employees = useMemo(() => {
+    const self = session ? [{
+      id: session.id,
+      name: session.name,
+      skin: session.skin,
+      position: avatar,
+      status: "You",
+      meetingId: null,
+    } satisfies Person] : [];
+    const normalizedQuery = query.trim().toLowerCase();
+    return [...self, ...remoteUsers].filter((employee) => {
+      if (!normalizedQuery) return true;
+      return employee.name.toLowerCase().includes(normalizedQuery) || employee.status.toLowerCase().includes(normalizedQuery);
+    });
+  }, [avatar, query, remoteUsers, session]);
+
+  return (
+    <aside className="people-drawer employee-search-drawer">
+      <div className="drawer-top">
+        <h1>Search</h1>
+        <button aria-label="Return to map" className="tiny-icon" onClick={showOfficeMap} type="button"><Map size={18} /></button>
+      </div>
+      <label className="search-box employee-search-box">
+        <Search size={18} />
+        <input autoFocus aria-label="Search employees" placeholder="Search employees" value={query} onChange={(event) => setQuery(event.target.value)} />
+      </label>
+      <section className="online-list employee-results">
+        <button className="online-heading" type="button">Employees ({employees.length})</button>
+        {employees.length ? employees.map((employee) => (
+          <button className="employee-result" key={employee.id} onClick={() => locateEmployee(employee.position)} type="button">
+            <span className={`person-avatar avatar-${employee.skin}`}>{employee.name[0]}</span>
+            <span>
+              <strong>{employee.name}</strong>
+              <small>{employee.status}</small>
+            </span>
+            <em>x {employee.position.x}, y {employee.position.y}</em>
+          </button>
+        )) : (
+          <p className="search-empty">No employees match your search.</p>
+        )}
+      </section>
+    </aside>
+  );
+}
+
+function SettingsWorkspace({
+  cameraOff,
+  muted,
+  onShowMap,
+  session,
+  setCameraOff,
+  setMuted,
+}: {
+  cameraOff: boolean;
+  muted: boolean;
+  onShowMap: () => void;
+  session: EmployeeSession | null;
+  setCameraOff: Dispatch<SetStateAction<boolean>>;
+  setMuted: Dispatch<SetStateAction<boolean>>;
+}) {
+  return (
+    <section className="settings-workspace" aria-label="Settings">
+      <aside className="settings-sidebar">
+        <span className="settings-mark" />
+        <h1>Settings</h1>
+        <p>Workspace preferences for your office session.</p>
+        <button onClick={onShowMap} type="button"><Map size={18} /> Return to office</button>
+      </aside>
+      <section className="settings-main">
+        <header>
+          <h2>Account</h2>
+          <span>{session ? session.email : "Not signed in"}</span>
+        </header>
+        <div className="settings-grid">
+          <article className="settings-card">
+            <strong>Profile</strong>
+            <label>
+              Name
+              <input disabled value={session?.name ?? ""} placeholder="Sign in to view your profile" />
+            </label>
+          </article>
+          <article className="settings-card">
+            <strong>Media defaults</strong>
+            <label className="settings-toggle">
+              <span><Mic size={18} /> Microphone muted</span>
+              <input checked={muted} onChange={(event) => setMuted(event.target.checked)} type="checkbox" />
+            </label>
+            <label className="settings-toggle">
+              <span><Video size={18} /> Camera off</span>
+              <input checked={cameraOff} onChange={(event) => setCameraOff(event.target.checked)} type="checkbox" />
+            </label>
+          </article>
+          <article className="settings-card">
+            <strong>Workspace</strong>
+            <p>Notifications, chat, calendar, map, and employee search are active for this workspace.</p>
+          </article>
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -2027,7 +2176,7 @@ function LeftRail({
           aria-label={tool.label}
           aria-pressed={activeTool === tool.id}
           onClick={() => {
-            if (tool.id === "map") {
+            if (tool.id === "map" || tool.id === "gather") {
               onShowMap();
               return;
             }
@@ -2039,8 +2188,15 @@ function LeftRail({
         </button>
       ))}
       <div className="rail-spacer" />
-      <button className="rail-button gift" aria-label="Rewards"><Gift aria-hidden="true" size={24} strokeWidth={2.2} /><span className="rail-dot" /></button>
-      <button className="rail-button" aria-label="Settings"><Settings aria-hidden="true" size={24} strokeWidth={2.2} /></button>
+      <button
+        aria-label="Settings"
+        aria-pressed={activeTool === "settings"}
+        className={activeTool === "settings" ? "rail-button active" : "rail-button"}
+        onClick={() => onSelectTool("settings")}
+        type="button"
+      >
+        <Settings aria-hidden="true" size={24} strokeWidth={2.2} />
+      </button>
     </nav>
   );
 }
