@@ -2,7 +2,7 @@
 
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { AtSign, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, CircleEllipsis, Clock3, Edit3, Gift, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
+import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Gift, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
@@ -1124,7 +1124,6 @@ export default function Home() {
             setDraft={setChatDraft}
             sendMessage={sendChatMessage}
             session={session}
-            employees={remoteUsers}
           />
         ) : activeTool === "calendar" ? (
           <CalendarWorkspace
@@ -1832,7 +1831,6 @@ function ChatWorkspace({
   setDraft,
   sendMessage,
   session,
-  employees,
 }: {
   channels: ChatChannel[];
   selectedChannel: ChatChannel;
@@ -1843,44 +1841,33 @@ function ChatWorkspace({
   setDraft: (draft: string) => void;
   sendMessage: () => void;
   session: EmployeeSession | null;
-  employees: Person[];
 }) {
+  const [query, setQuery] = useState("");
+  const filteredChannels = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return channels;
+    return channels.filter((channel) => channel.name.toLowerCase().includes(normalizedQuery));
+  }, [channels, query]);
+
   return (
     <section className="chat-workspace" aria-label="Chat">
       <aside className="chat-sidebar">
         <header className="chat-sidebar-header">
           <h1>Chat</h1>
-          <div className="chat-header-actions">
-            <button aria-label="New message"><Edit3 size={17} /></button>
-            <button aria-label="More chat options"><CircleEllipsis size={18} /></button>
-          </div>
         </header>
         <label className="chat-search">
           <Search size={17} />
-          <input placeholder="Search or navigate..." />
+          <input aria-label="Search rooms" placeholder="Search rooms" value={query} onChange={(event) => setQuery(event.target.value)} />
           <kbd>F</kbd>
         </label>
-        <nav className="chat-quick-links" aria-label="Chat shortcuts">
-          <button><MessageCircle size={17} />Threads</button>
-          <button><Send size={17} />Drafts</button>
-        </nav>
         <section className="chat-channel-list">
           <button className="chat-section-title">Rooms</button>
-          {channels.map((channel) => (
+          {filteredChannels.length ? filteredChannels.map((channel) => (
             <button className={channel.id === selectedChannelId ? "chat-channel active" : "chat-channel"} key={channel.id} onClick={() => onSelectChannel(channel.id)}>
               {channel.locked ? <Lock size={15} /> : <Hash size={16} />}
               <span>{channel.name}</span>
             </button>
-          ))}
-        </section>
-        <section className="chat-channel-list">
-          <button className="chat-section-title">Direct messages</button>
-          {employees.length ? employees.map((employee) => (
-            <div className="chat-dm" key={employee.id}>
-              <span className="chat-avatar">{employee.name[0]}</span>
-              <span>{employee.name}</span>
-            </div>
-          )) : <p className="chat-empty-small">No other employees online.</p>}
+          )) : <p className="chat-empty-small">No rooms match your search.</p>}
         </section>
       </aside>
       <section className="chat-main">
@@ -1889,7 +1876,6 @@ function ChatWorkspace({
             {selectedChannel.locked ? <Lock size={18} /> : <Hash size={19} />}
             <strong>{selectedChannel.name}</strong>
           </div>
-          <button className="chat-meet-button">Meet</button>
         </header>
         <div className="chat-message-list">
           {messages.length ? messages.map((message) => {
@@ -1917,9 +1903,7 @@ function ChatWorkspace({
             sendMessage();
           }}
         >
-          <button type="button" aria-label="Add attachment"><Plus size={19} /></button>
           <input disabled={!session} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={session ? `Message #${selectedChannel.name}` : "Sign in to send messages"} />
-          <button type="button" aria-label="Mention"><AtSign size={19} /></button>
           <button type="submit" aria-label="Send message"><Send size={20} /></button>
         </form>
       </section>

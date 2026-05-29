@@ -19,8 +19,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: "NunitoLocal", Arial, Helvetica, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
 }
 
 * {
@@ -33,7 +33,7 @@ body {
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
-  font-family: "NunitoLocal", var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: "NunitoLocal", Arial, Helvetica, sans-serif;
 }
 
 button,
@@ -1928,25 +1928,10 @@ kbd {
   font-weight: 1000;
 }
 
-.chat-header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-header-actions button,
-.chat-room-header button,
 .chat-composer button {
   display: grid;
   place-items: center;
   border: 0;
-}
-
-.chat-header-actions button {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  background: #f1f1f1;
-  color: #363a40;
 }
 
 .chat-search {
@@ -1968,14 +1953,12 @@ kbd {
   color: #3e434b;
 }
 
-.chat-quick-links,
 .chat-channel-list {
   display: grid;
   gap: 2px;
-  margin-top: 17px;
+  margin-top: 18px;
 }
 
-.chat-quick-links button,
 .chat-channel,
 .chat-section-title {
   display: flex;
@@ -1988,7 +1971,6 @@ kbd {
   text-align: left;
 }
 
-.chat-quick-links button,
 .chat-channel {
   height: 36px;
   border-radius: 10px;
@@ -2002,8 +1984,7 @@ kbd {
   color: #1f2329;
 }
 
-.chat-channel span,
-.chat-dm span:last-child {
+.chat-channel span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2015,16 +1996,6 @@ kbd {
   color: #686d75;
   font-size: 13px;
   font-weight: 900;
-}
-
-.chat-dm {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 2px;
-  color: #383d45;
-  font-weight: 800;
 }
 
 .chat-avatar {
@@ -2086,15 +2057,6 @@ kbd {
   font-weight: 1000;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.chat-meet-button {
-  height: 36px;
-  border-radius: 10px;
-  background: #4451e8;
-  padding: 0 18px;
-  color: white;
-  font-weight: 1000;
 }
 
 .chat-message-list {
@@ -2179,13 +2141,13 @@ kbd {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 0 16px 14px;
   border: 1px solid #dedede;
   border-radius: 10px;
-  padding: 8px;
+  padding: 8px 10px 8px 14px;
 }
 
 .chat-composer input {
