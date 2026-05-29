@@ -414,6 +414,7 @@ export default function Home() {
   const pathRef = useRef<Point[]>([]);
   const cameraRef = useRef<HTMLDivElement | null>(null);
   const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+  const peerSendersRef = useRef<Record<string, { audio: RTCRtpSender; video: RTCRtpSender }>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<EmployeeSession | null>(null);
   const activeMeetingIdRef = useRef<string | null>(null);
@@ -539,6 +540,7 @@ export default function Home() {
     }
     Object.values(peerConnectionsRef.current).forEach((pc) => pc.close());
     peerConnectionsRef.current = {};
+    peerSendersRef.current = {};
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
     setLocalStream(null);
@@ -768,12 +770,13 @@ export default function Home() {
     }
   }, [cameraOff, muted]);
 
-  const addMissingTracks = useCallback((pc: RTCPeerConnection, stream: MediaStream | null) => {
-    if (!stream) return;
-    const senders = pc.getSenders();
-    for (const track of stream.getTracks()) {
-      if (!senders.some((sender) => sender.track === track)) pc.addTrack(track, stream);
-    }
+  const syncPeerTracks = useCallback((remoteId: string, stream: MediaStream | null) => {
+    const senders = peerSendersRef.current[remoteId];
+    if (!senders) return;
+    const audioTrack = stream?.getAudioTracks()[0] ?? null;
+    const videoTrack = stream?.getVideoTracks()[0] ?? null;
+    void senders.audio.replaceTrack(audioTrack).catch(() => undefined);
+    void senders.video.replaceTrack(videoTrack).catch(() => undefined);
   }, []);
 
   const stopLocalTracks = useCallback((kind: "audio" | "video") => {
@@ -803,7 +806,10 @@ export default function Home() {
 
     const pc = new RTCPeerConnection(RTC_CONFIGURATION);
     peerConnectionsRef.current[remoteId] = pc;
-    addMissingTracks(pc, localStreamRef.current);
+    const audioSender = pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
+    const videoSender = pc.addTransceiver("video", { direction: "sendrecv" }).sender;
+    peerSendersRef.current[remoteId] = { audio: audioSender, video: videoSender };
+    syncPeerTracks(remoteId, localStreamRef.current);
 
     pc.onicecandidate = (event) => {
       if (!event.candidate || !activeMeetingIdRef.current) return;
@@ -833,11 +839,12 @@ export default function Home() {
     };
 
     return pc;
-  }, [addMissingTracks, sendSignal]);
+  }, [sendSignal, syncPeerTracks]);
 
   const closePeer = useCallback((remoteId: string) => {
     peerConnectionsRef.current[remoteId]?.close();
     delete peerConnectionsRef.current[remoteId];
+    delete peerSendersRef.current[remoteId];
     setRemoteStreams((current) => {
       const next = { ...current };
       delete next[remoteId];
@@ -860,7 +867,7 @@ export default function Home() {
 
     if (message.kind === "offer") {
       const stream = await ensureLocalStream();
-      addMissingTracks(pc, stream);
+      syncPeerTracks(message.from, stream);
       await pc.setRemoteDescription(message.payload as RTCSessionDescriptionInit);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -876,7 +883,7 @@ export default function Home() {
     if (message.kind === "ice") {
       await pc.addIceCandidate(message.payload as RTCIceCandidateInit).catch(() => undefined);
     }
-  }, [addMissingTracks, closePeer, ensureLocalStream, getPeerConnection, sendSignal]);
+  }, [closePeer, ensureLocalStream, getPeerConnection, sendSignal, syncPeerTracks]);
 
   useEffect(() => {
     if (!session) return;
@@ -1255,9 +1262,8 @@ export default function Home() {
       for (const participant of meeting.participants) {
         const pc = getPeerConnection(participant.id);
         if (!pc) continue;
-        const needsOffer = !!stream && stream.getTracks().some((track) => !pc.getSenders().some((sender) => sender.track === track));
-        addMissingTracks(pc, stream);
-        if (currentSession.id < participant.id && pc.signalingState === "stable" && (!pc.localDescription || needsOffer)) {
+        syncPeerTracks(participant.id, stream);
+        if (currentSession.id < participant.id && pc.signalingState === "stable" && !pc.localDescription) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           await sendSignal({ from: currentSession.id, to: participant.id, meetingId: meeting.id, kind: "offer", payload: offer });
@@ -1266,16 +1272,22 @@ export default function Home() {
     }
 
     void connectParticipants();
-  }, [activeMeeting, addMissingTracks, closePeer, ensureLocalStream, getPeerConnection, sendSignal, session]);
+  }, [activeMeeting, closePeer, ensureLocalStream, getPeerConnection, sendSignal, session, syncPeerTracks]);
 
   useEffect(() => {
     if (muted) stopLocalTracks("audio");
     if (cameraOff) stopLocalTracks("video");
     const timer = window.setTimeout(() => {
-      if ((!muted || !cameraOff) && activeMeeting) void ensureLocalStream();
+      if ((!muted || !cameraOff) && activeMeeting) {
+        void ensureLocalStream().then((stream) => {
+          Object.keys(peerConnectionsRef.current).forEach((remoteId) => syncPeerTracks(remoteId, stream));
+        });
+      } else {
+        Object.keys(peerConnectionsRef.current).forEach((remoteId) => syncPeerTracks(remoteId, localStreamRef.current));
+      }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeMeeting, cameraOff, ensureLocalStream, muted, stopLocalTracks]);
+  }, [activeMeeting, cameraOff, ensureLocalStream, muted, stopLocalTracks, syncPeerTracks]);
 
   useEffect(() => () => {
     Object.values(peerConnectionsRef.current).forEach((pc) => pc.close());
