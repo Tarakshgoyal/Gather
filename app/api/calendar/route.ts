@@ -1,6 +1,7 @@
-import { createCalendarEvent, createEventNotification, listCalendarEvents, startCalendarEvent } from "@/app/lib/db";
+import { createCalendarEvent, createEventNotification, endCalendarEvent, listCalendarEvents, startCalendarEvent } from "@/app/lib/db";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 const fallbackEvents: never[] = [];
 
@@ -55,9 +56,18 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const eventId = Number(body.eventId);
   const creatorId = String(body.creatorId ?? "").trim();
+  const action = String(body.action ?? "start");
 
   if (!Number.isInteger(eventId) || !creatorId) {
     return Response.json({ error: "eventId and creatorId are required" }, { status: 400 });
+  }
+
+  if (action === "end") {
+    const event = await endCalendarEvent(eventId, creatorId).catch(() => null);
+    if (!event) {
+      return Response.json({ error: "Only the meeting creator can end a started meeting" }, { status: 403 });
+    }
+    return Response.json({ event });
   }
 
   const event = await startCalendarEvent(eventId, creatorId).catch(() => null);

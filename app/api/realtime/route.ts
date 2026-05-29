@@ -1,6 +1,20 @@
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-import { createChatMessage, getEmployeePosition, latestChatId, listChatMessages, saveEmployeePosition } from "@/app/lib/db";
+import {
+  createChatMessage,
+  createSignal,
+  deletePresence,
+  getEmployeePosition,
+  latestChatId,
+  latestSignalId,
+  listChatMessages,
+  listPresence,
+  listSignals,
+  pruneRealtimeState,
+  saveEmployeePosition,
+  savePresence,
+} from "@/app/lib/db";
 
 type Point = {
   x: number;
@@ -69,6 +83,7 @@ function prune() {
 
 export async function GET(request: Request) {
   prune();
+  await pruneRealtimeState().catch(() => null);
   const url = new URL(request.url);
   const userId = url.searchParams.get("userId") ?? "";
   const after = Number(url.searchParams.get("after") ?? "0");
@@ -77,12 +92,15 @@ export async function GET(request: Request) {
   const positionFor = url.searchParams.get("positionFor");
   const persistedChatMessages = channelId ? await listChatMessages(channelId, afterChat).catch(() => null) : null;
   const persistedLatestChatId = channelId ? await latestChatId().catch(() => null) : null;
+  const persistedPresence = await listPresence().catch(() => null);
+  const persistedSignals = await listSignals(userId, after).catch(() => null);
+  const persistedLatestSignalId = await latestSignalId().catch(() => null);
   const savedPosition = positionFor ? await getEmployeePosition(positionFor).catch(() => null) : null;
 
   return Response.json({
-    users: Array.from(presence.values()),
-    signals: signals.filter((message) => message.id > after && (message.to === userId || message.to === "*")),
-    latestSignalId: globalStore.gatherSignalSeq ?? 0,
+    users: persistedPresence ?? Array.from(presence.values()),
+    signals: persistedSignals ?? signals.filter((message) => message.id > after && (message.to === userId || message.to === "*")),
+    latestSignalId: persistedLatestSignalId ?? globalStore.gatherSignalSeq ?? 0,
     chatMessages: persistedChatMessages ?? (channelId ? chatMessages.filter((message) => message.channelId === channelId && message.id > afterChat) : []),
     latestChatId: persistedLatestChatId ?? globalStore.gatherChatSeq ?? 0,
     savedPosition,
@@ -94,7 +112,7 @@ export async function POST(request: Request) {
   prune();
 
   if (body.type === "presence") {
-    presence.set(body.user.id, {
+    const user = {
       id: String(body.user.id),
       name: String(body.user.name),
       skin: String(body.user.skin),
@@ -102,13 +120,26 @@ export async function POST(request: Request) {
       status: String(body.user.status),
       meetingId: body.user.meetingId ? String(body.user.meetingId) : null,
       updatedAt: Date.now(),
-    });
+    };
+    presence.set(user.id, user);
+    await savePresence(user).catch(() => null);
     await saveEmployeePosition(String(body.user.id), body.user.position).catch(() => null);
 
     return Response.json({ ok: true });
   }
 
   if (body.type === "signal") {
+    const persistedId = await createSignal({
+      from: String(body.message.from),
+      to: String(body.message.to),
+      meetingId: String(body.message.meetingId),
+      kind: body.message.kind,
+      payload: body.message.payload,
+    }).catch(() => null);
+    if (persistedId) {
+      return Response.json({ ok: true, id: persistedId });
+    }
+
     globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
     signals.push({
       id: globalStore.gatherSignalSeq,
@@ -154,7 +185,20 @@ export async function POST(request: Request) {
   }
 
   if (body.type === "leave") {
-    presence.delete(String(body.userId));
+    const userId = String(body.userId);
+    presence.delete(userId);
+    await deletePresence(userId).catch(() => null);
+    const persistedId = await createSignal({
+      from: userId,
+      to: "*",
+      meetingId: "*",
+      kind: "leave",
+      payload: {},
+    }).catch(() => null);
+    if (persistedId) {
+      return Response.json({ ok: true });
+    }
+
     globalStore.gatherSignalSeq = (globalStore.gatherSignalSeq ?? 0) + 1;
     signals.push({
       id: globalStore.gatherSignalSeq,

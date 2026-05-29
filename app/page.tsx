@@ -75,6 +75,7 @@ type CalendarEvent = {
   creatorId: string;
   creatorName: string;
   liveStartedAt: string | null;
+  liveEndedAt: string | null;
   createdAt: string;
 };
 type CalendarDraft = {
@@ -1068,6 +1069,21 @@ export default function Home() {
     window.setTimeout(() => setCalendarNotice(""), 2800);
   }, [session]);
 
+  const endCalendarMeeting = useCallback(async (event: CalendarEvent) => {
+    if (!session || event.creatorId !== session.id) return;
+    const response = await fetch("/api/calendar", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end" }),
+    }).catch(() => null);
+    if (!response?.ok) return;
+    const data = await response.json() as { event: CalendarEvent };
+    setCalendarEvents((current) => current.map((item) => item.id === data.event.id ? data.event : item));
+    setSelectedCalendarEvent(data.event);
+    setCalendarNotice("Meeting ended.");
+    window.setTimeout(() => setCalendarNotice(""), 2800);
+  }, [session]);
+
   const startNpcMeeting = useCallback(async (event: CalendarEvent) => {
     if (!session || event.creatorId !== session.id) {
       setNpcNotice("Only the creator can start this meeting.");
@@ -1093,9 +1109,34 @@ export default function Home() {
     window.setTimeout(() => setNpcNotice(""), 2800);
   }, [session]);
 
+  const endNpcMeeting = useCallback(async (event: CalendarEvent) => {
+    if (!session || event.creatorId !== session.id) {
+      setNpcNotice("Only the creator can end this meeting.");
+      window.setTimeout(() => setNpcNotice(""), 2800);
+      return;
+    }
+
+    const response = await fetch("/api/calendar", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventId: event.id, creatorId: session.id, action: "end" }),
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      setNpcNotice("Only the creator can end a started meeting.");
+      window.setTimeout(() => setNpcNotice(""), 2800);
+      return;
+    }
+
+    const data = await response.json() as { event: CalendarEvent };
+    setCalendarEvents((current) => current.map((item) => item.id === data.event.id ? data.event : item));
+    setNpcNotice("Meeting ended.");
+    window.setTimeout(() => setNpcNotice(""), 2800);
+  }, [session]);
+
   const joinCalendarMeeting = useCallback((event: CalendarEvent) => {
-    if (!event.liveStartedAt) {
-      setCalendarNotice("Meeting has not been started yet.");
+    if (!event.liveStartedAt || event.liveEndedAt) {
+      setCalendarNotice(event.liveEndedAt ? "Meeting has ended." : "Meeting has not been started yet.");
       window.setTimeout(() => setCalendarNotice(""), 2800);
       return;
     }
@@ -1112,8 +1153,8 @@ export default function Home() {
   }, [showOfficeMap]);
 
   const joinNpcMeeting = useCallback((event: CalendarEvent) => {
-    if (!event.liveStartedAt) {
-      setNpcNotice("Meeting has not been started yet.");
+    if (!event.liveStartedAt || event.liveEndedAt) {
+      setNpcNotice(event.liveEndedAt ? "Meeting has ended." : "Meeting has not been started yet.");
       window.setTimeout(() => setNpcNotice(""), 2800);
       return;
     }
@@ -1230,6 +1271,7 @@ export default function Home() {
             setDraft={setCalendarDraft}
             createMeeting={createCalendarMeeting}
             startMeeting={startCalendarMeeting}
+            endMeeting={endCalendarMeeting}
             joinMeeting={joinCalendarMeeting}
             session={session}
           />
@@ -1305,6 +1347,7 @@ export default function Home() {
                   onClose={() => setActiveNpcId(null)}
                   onCreate={createNpcMeeting}
                   onDraftChange={setNpcDraft}
+                  onEnd={endNpcMeeting}
                   onJoin={joinNpcMeeting}
                   onStart={startNpcMeeting}
                   session={session}
@@ -1417,6 +1460,7 @@ function NpcAssistantPanel({
   onClose,
   onCreate,
   onDraftChange,
+  onEnd,
   onJoin,
   onStart,
   session,
@@ -1430,6 +1474,7 @@ function NpcAssistantPanel({
   onClose: () => void;
   onCreate: () => void;
   onDraftChange: (draft: CalendarDraft) => void;
+  onEnd: (event: CalendarEvent) => void;
   onJoin: (event: CalendarEvent) => void;
   onStart: (event: CalendarEvent) => void;
   session: EmployeeSession | null;
@@ -1455,16 +1500,18 @@ function NpcAssistantPanel({
           <div className="npc-event-list">
             {events.map((event) => {
               const isCreator = session?.id === event.creatorId;
-              const ended = new Date(event.endAt).getTime() < currentTime;
+              const ended = !!event.liveEndedAt || new Date(event.endAt).getTime() < currentTime;
+              const live = !!event.liveStartedAt && !event.liveEndedAt;
               return (
-                <article className={`${event.liveStartedAt ? "npc-event npc-event-live" : "npc-event"} ${ended ? "npc-event-past" : ""}`} key={event.id}>
+                <article className={`${live ? "npc-event npc-event-live" : "npc-event"} ${ended ? "npc-event-past" : ""}`} key={event.id}>
                   <div>
                     <strong>{event.title}</strong>
                     <span>{formatEventDateTime(event.startAt)} · {formatTimeRange(event.startAt, event.endAt)}</span>
-                    <small>{event.creatorName}{event.liveStartedAt ? " · live now" : ended ? " · completed" : ""}</small>
+                    <small>{event.creatorName}{live ? " · live now" : ended ? " · ended" : ""}</small>
                   </div>
                   <div className="npc-event-actions">
                     {isCreator && !event.liveStartedAt && !ended ? <button type="button" onClick={() => onStart(event)}><Video size={16} /> Start</button> : null}
+                    {isCreator && live ? <button className="npc-end-button" type="button" onClick={() => onEnd(event)}>End</button> : null}
                     {!ended ? <button type="button" onClick={() => onJoin(event)}>Join</button> : null}
                   </div>
                 </article>
@@ -1642,6 +1689,7 @@ function CalendarWorkspace({
   setDraft,
   createMeeting,
   startMeeting,
+  endMeeting,
   joinMeeting,
   session,
 }: {
@@ -1661,6 +1709,7 @@ function CalendarWorkspace({
   setDraft: (draft: CalendarDraft) => void;
   createMeeting: () => void;
   startMeeting: (event: CalendarEvent) => void;
+  endMeeting: (event: CalendarEvent) => void;
   joinMeeting: (event: CalendarEvent) => void;
   session: EmployeeSession | null;
 }) {
@@ -1774,12 +1823,13 @@ function CalendarWorkspace({
                 <div><dt>Time</dt><dd>{formatTimeRange(selectedEvent.startAt, selectedEvent.endAt)}</dd></div>
                 <div><dt>Date</dt><dd>{new Intl.DateTimeFormat(undefined, { dateStyle: "full" }).format(new Date(selectedEvent.startAt))}</dd></div>
                 <div><dt>Created by</dt><dd>{selectedEvent.creatorName}</dd></div>
-                <div><dt>Status</dt><dd>{selectedEvent.liveStartedAt ? "Started" : "Not started"}</dd></div>
+                <div><dt>Status</dt><dd>{selectedEvent.liveEndedAt ? "Ended" : selectedEvent.liveStartedAt ? "Started" : "Not started"}</dd></div>
               </dl>
               {selectedEvent.description ? <p className="calendar-detail-description">{selectedEvent.description}</p> : null}
               <div className="calendar-detail-actions">
-                {session?.id === selectedEvent.creatorId && !selectedEvent.liveStartedAt ? <button type="button" onClick={() => startMeeting(selectedEvent)}><Video size={18} /> Start meeting</button> : null}
-                <button type="button" onClick={() => joinMeeting(selectedEvent)}>Join meeting</button>
+                {session?.id === selectedEvent.creatorId && !selectedEvent.liveStartedAt && !selectedEvent.liveEndedAt ? <button type="button" onClick={() => startMeeting(selectedEvent)}><Video size={18} /> Start meeting</button> : null}
+                {session?.id === selectedEvent.creatorId && selectedEvent.liveStartedAt && !selectedEvent.liveEndedAt ? <button className="calendar-end-button" type="button" onClick={() => endMeeting(selectedEvent)}>End meeting</button> : null}
+                {!selectedEvent.liveEndedAt ? <button type="button" onClick={() => joinMeeting(selectedEvent)}>Join meeting</button> : null}
               </div>
             </section>
           </div>
@@ -1795,7 +1845,7 @@ function CalendarEventCard({ event, onSelect }: { event: CalendarEvent; onSelect
   const top = (start.getHours() * 60 + start.getMinutes()) * (72 / 60);
   const height = Math.max(34, ((end.getTime() - start.getTime()) / 60000) * (72 / 60));
   return (
-    <button className={event.liveStartedAt ? "calendar-event-card calendar-event-live" : "calendar-event-card"} style={{ top, height }} onClick={() => onSelect(event)}>
+    <button className={event.liveEndedAt ? "calendar-event-card calendar-event-ended" : event.liveStartedAt ? "calendar-event-card calendar-event-live" : "calendar-event-card"} style={{ top, height }} onClick={() => onSelect(event)}>
       <strong>{event.title}</strong>
       <span>{formatTimeRange(event.startAt, event.endAt)}</span>
       <small>{event.roomName}</small>

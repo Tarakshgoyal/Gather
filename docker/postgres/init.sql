@@ -9,6 +9,32 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS chat_messages_channel_id_id_idx ON chat_messages (channel_id, id);
 
+CREATE TABLE IF NOT EXISTS realtime_presence (
+  employee_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  skin TEXT NOT NULL,
+  x INTEGER NOT NULL,
+  y INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  meeting_id TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS realtime_presence_updated_at_idx ON realtime_presence (updated_at);
+
+CREATE TABLE IF NOT EXISTS realtime_signals (
+  id BIGSERIAL PRIMARY KEY,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  meeting_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('offer', 'answer', 'ice', 'leave')),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS realtime_signals_to_id_id_idx ON realtime_signals (to_id, id);
+CREATE INDEX IF NOT EXISTS realtime_signals_created_at_idx ON realtime_signals (created_at);
+
 CREATE TABLE IF NOT EXISTS employee_positions (
   employee_id TEXT PRIMARY KEY,
   x INTEGER NOT NULL,
@@ -27,6 +53,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   creator_id TEXT NOT NULL,
   creator_name TEXT NOT NULL,
   live_started_at TIMESTAMPTZ,
+  live_ended_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (end_at > start_at)
 );

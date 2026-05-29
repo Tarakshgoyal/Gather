@@ -1352,6 +1352,10 @@ kbd {
   background: #4451e8;
 }
 
+.npc-event-actions button.npc-end-button {
+  background: #ef4d58;
+}
+
 .npc-empty {
   margin: 0;
   color: #68707a;
@@ -2326,6 +2330,12 @@ kbd {
   color: #17633e;
 }
 
+.calendar-event-ended {
+  border-color: rgba(112, 119, 129, 0.24);
+  background: #f3f5f7;
+  color: #707781;
+}
+
 .calendar-event-card strong,
 .calendar-event-card span,
 .calendar-event-card small {
@@ -2492,6 +2502,10 @@ kbd {
 
 .calendar-detail-actions button:last-child {
   background: #20252d;
+}
+
+.calendar-detail-actions .calendar-end-button {
+  background: #ef4d58;
 }
 
 .notifications-workspace {

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "db:migrate:neon": "node scripts/migrate-local-to-neon.mjs",
     "infra:up": "docker compose up -d postgres redis kafka",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f postgres redis kafka"

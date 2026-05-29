@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gather Office
 
-## Getting Started
+Next.js Gather-style office with persistent chat, calendar meetings, notifications, room NPC assistants, and WebRTC signaling.
 
-First, run the development server:
+## Local Development
 
 ```bash
+npm install
+npm run infra:up
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Local Docker uses:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+DATABASE_URL=postgres://gather:gather_dev_password@127.0.0.1:5432/gather
+```
 
-## Learn More
+## Vercel Deployment
 
-To learn more about Next.js, take a look at the following resources:
+Use a hosted Postgres database such as Vercel Postgres, Neon, Supabase, or Railway. Docker Postgres, Redis, and Kafka are local-only helpers and are not used by the Vercel deployment.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Create a hosted Postgres database.
+2. In Vercel Project Settings, add:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```env
+DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require
+```
 
-## Deploy on Vercel
+3. Deploy with Vercel's default Next.js settings:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The app creates its required tables automatically on first request:
+
+- `chat_messages`
+- `calendar_events`
+- `notifications`
+- `employee_positions`
+- `realtime_presence`
+- `realtime_signals`
+
+## Notes
+
+- API routes run on the Node.js runtime because the app uses `pg`.
+- Presence and WebRTC signaling are persisted in Postgres so Vercel serverless instances can share office state.
+- For production-scale realtime, move presence/signaling to a dedicated realtime service such as LiveKit, Ably, Pusher, or a small WebSocket server.

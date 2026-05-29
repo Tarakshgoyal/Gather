@@ -1,6 +1,7 @@
 import { listNotifications, markNotificationRead } from "@/app/lib/db";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function GET() {
   const notifications = await listNotifications().catch(() => null);
