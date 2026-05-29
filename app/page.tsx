@@ -2,7 +2,7 @@
 
 import { CSSProperties, Dispatch, SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKitRoom, VideoConference, useLocalParticipant } from "@livekit/components-react";
-import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
+import { Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, ChevronUp, Clock3, Hash, Hand, Lock, Map, MessageCircle, Mic, MicOff, Network, PanelLeftClose, PanelLeftOpen, Plus, RotateCw, ScreenShare, Search, Send, Settings, Smile, Video, VideoOff, X } from "lucide-react";
 
 type Direction = "down" | "up" | "left" | "right";
 type Point = { x: number; y: number };
@@ -393,6 +393,7 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatDraft, setChatDraft] = useState("");
   const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
+  const [leftDrawerHidden, setLeftDrawerHidden] = useState(false);
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarRoomId, setCalendarRoomId] = useState("all");
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -624,6 +625,7 @@ export default function Home() {
 
   const showOfficeMap = useCallback(() => {
     setActiveTool("map");
+    setLeftDrawerHidden(false);
     scrollCameraToPoint(avatar);
   }, [avatar, scrollCameraToPoint]);
 
@@ -1106,6 +1108,19 @@ export default function Home() {
     };
   }, [activeMeetingRoomName, session]);
 
+  const selectRailTool = useCallback((tool: RailTool) => {
+    if (tool === "search" || tool === "map" || tool === "gather") {
+      setLeftDrawerHidden(false);
+    }
+    setActiveTool(tool);
+  }, []);
+
+  const shellClassName = [
+    "gather-shell",
+    activeTool === "calendar" || activeTool === "notifications" || activeTool === "settings" ? "calendar-shell" : "",
+    leftDrawerHidden && (activeTool === "map" || activeTool === "gather") ? "left-drawer-hidden" : "",
+  ].filter(Boolean).join(" ");
+
   return (
     <>
       {authChecked && !session ? (
@@ -1120,8 +1135,8 @@ export default function Home() {
           submitAuth={submitAuth}
         />
       ) : null}
-      <main className={activeTool === "calendar" || activeTool === "notifications" || activeTool === "settings" ? "gather-shell calendar-shell" : "gather-shell"}>
-        <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onSelectTool={setActiveTool} onShowMap={showOfficeMap} />
+      <main className={shellClassName}>
+        <LeftRail activeTool={activeTool} notificationCount={unreadNotificationCount} onSelectTool={selectRailTool} onShowMap={showOfficeMap} />
         {activeTool === "chat" ? (
           <ChatWorkspace
             channels={chatChannels}
@@ -1179,9 +1194,19 @@ export default function Home() {
                 setQuery={setEmployeeSearchQuery}
                 showOfficeMap={showOfficeMap}
               />
+            ) : leftDrawerHidden ? (
+              <button aria-label="Show sidebar" className="drawer-expand-button" onClick={() => setLeftDrawerHidden(false)} type="button">
+                <PanelLeftOpen size={18} />
+                <span>Open</span>
+              </button>
             ) : (
               <aside className="people-drawer">
-                <div className="drawer-top"><h1>abcde</h1><button aria-label="Collapse sidebar" className="tiny-icon" type="button">||</button></div>
+                <div className="drawer-top">
+                  <h1>abcde</h1>
+                  <button aria-label="Collapse sidebar" className="tiny-icon" onClick={() => setLeftDrawerHidden(true)} type="button">
+                    <PanelLeftClose size={18} />
+                  </button>
+                </div>
                 <section className="invite-panel">
                   <h2>Experience Gather together</h2>
                   <p>Invite your closest collaborators.</p>

@@ -151,6 +151,7 @@ button {
 }
 
 .gather-shell {
+  position: relative;
   display: grid;
   grid-template-columns: 76px 366px minmax(0, 1fr) 54px;
   width: 100vw;
@@ -161,6 +162,10 @@ button {
     radial-gradient(circle at 94% 84%, #80d56a 0 6%, transparent 6.2%),
     linear-gradient(90deg, #ebebeb 0 76px, transparent 76px),
     #d9f0d9;
+}
+
+.gather-shell.left-drawer-hidden {
+  grid-template-columns: 76px minmax(0, 1fr) 54px;
 }
 
 .calendar-shell {
@@ -480,6 +485,31 @@ button {
   color: #3c3f45;
   font-size: 11px;
   font-weight: 900;
+}
+
+.drawer-expand-button {
+  position: absolute;
+  left: 96px;
+  top: 80px;
+  z-index: 15;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 10px 13px;
+  color: #242a32;
+  font-size: 13px;
+  font-weight: 1000;
+  box-shadow: 0 10px 28px rgba(20, 28, 35, 0.14);
+  backdrop-filter: blur(10px);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.drawer-expand-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(20, 28, 35, 0.18);
 }
 
 .invite-panel {
@@ -3128,6 +3158,10 @@ kbd {
     grid-template-columns: 64px 300px minmax(0, 1fr);
   }
 
+  .gather-shell.left-drawer-hidden {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
   .calendar-shell {
     grid-template-columns: 64px minmax(0, 1fr);
   }
@@ -3175,6 +3209,15 @@ kbd {
 
   .gather-shell {
     grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .gather-shell.left-drawer-hidden {
+    grid-template-columns: 58px minmax(0, 1fr);
+  }
+
+  .drawer-expand-button {
+    left: 72px;
+    top: 68px;
   }
 
   .calendar-shell {
