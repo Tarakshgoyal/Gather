@@ -1331,6 +1331,7 @@ export default function Home() {
           />
         ) : activeTool === "calendar" ? (
           <CalendarWorkspace
+            activeOffice={activeOffice}
             rooms={calendarRooms}
             weekDays={weekDays}
             weekStart={calendarWeekStart}
@@ -1350,6 +1351,8 @@ export default function Home() {
             endMeeting={endCalendarMeeting}
             joinMeeting={joinCalendarMeeting}
             session={session}
+            inviteStatus={inviteStatus}
+            copyInviteLink={copyInviteLink}
           />
         ) : activeTool === "notifications" ? (
           <NotificationsWorkspace notifications={notifications} onMarkAsRead={markNotificationAsRead} />
@@ -1995,6 +1998,7 @@ function OfficeDialog({
 }
 
 function CalendarWorkspace({
+  activeOffice,
   rooms,
   weekDays,
   weekStart,
@@ -2014,7 +2018,10 @@ function CalendarWorkspace({
   endMeeting,
   joinMeeting,
   session,
+  inviteStatus,
+  copyInviteLink,
 }: {
+  activeOffice: OfficeMembership | null;
   rooms: Array<{ id: string; name: string }>;
   weekDays: Date[];
   weekStart: Date;
@@ -2034,6 +2041,8 @@ function CalendarWorkspace({
   endMeeting: (event: CalendarEvent, mom: string) => void;
   joinMeeting: (event: CalendarEvent) => void;
   session: EmployeeSession | null;
+  inviteStatus: string;
+  copyInviteLink: () => void;
 }) {
   const [sidebarTab, setSidebarTab] = useState<"scheduled" | "notes">("scheduled");
   const today = new Date();
@@ -2059,7 +2068,8 @@ function CalendarWorkspace({
           <h2>Experience Gather together</h2>
           <p>Invite your closest collaborators.</p>
           <div className="invite-faces">{["A", "B", "C", "D", "E"].map((face, index) => <span aria-hidden="true" className={`invite-face face-${index}`} key={face}><span /></span>)}</div>
-          <button className="invite-button"><span>Invite</span><span className="copy-mark">link</span></button>
+          <button className="invite-button" disabled={!activeOffice} onClick={copyInviteLink} type="button"><span>Invite</span><span className="copy-mark">link</span></button>
+          {inviteStatus ? <small className="invite-status">{inviteStatus}</small> : null}
         </section>
         <label className="chat-search calendar-search">
           <Search size={17} />
