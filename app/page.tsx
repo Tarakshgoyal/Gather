@@ -1296,7 +1296,6 @@ export default function Home() {
                 />
               ) : null}
             </section>
-            <RightRail />
           </>
         )}
       </main>
@@ -2224,10 +2223,6 @@ function LeftRail({
       </button>
     </nav>
   );
-}
-
-function RightRail() {
-  return <nav className="right-rail" aria-label="Integrations">{["tag", "team", "cube", "mail", "in", "send", "ig", "ai", "play"].map((item) => <button className="integration-button" key={item} aria-label={item}>{item}</button>)}<div className="rail-spacer" /><button className="integration-button large" aria-label="Zoom in">+</button><button className="integration-button large" aria-label="Zoom out">-</button><button className="integration-button active" aria-label="Minimap">map</button></nav>;
 }
 
 function PersonRow({ name, status, tone }: { name: string; status: string; tone: string }) {

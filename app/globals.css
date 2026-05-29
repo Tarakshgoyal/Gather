@@ -153,7 +153,7 @@ button {
 .gather-shell {
   position: relative;
   display: grid;
-  grid-template-columns: 76px 366px minmax(0, 1fr) 54px;
+  grid-template-columns: 76px 366px minmax(0, 1fr);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -165,11 +165,11 @@ button {
 }
 
 .gather-shell.left-drawer-hidden {
-  grid-template-columns: 76px minmax(0, 1fr) 54px;
+  grid-template-columns: 76px minmax(0, 1fr);
 }
 
 .calendar-shell {
-  grid-template-columns: 76px minmax(0, 1fr) 54px;
+  grid-template-columns: 76px minmax(0, 1fr);
   background: #eeeeee;
 }
 
@@ -848,12 +848,18 @@ kbd {
 
 .office-camera {
   position: absolute;
-  inset: 58px 0 118px;
+  inset: 0;
   z-index: 1;
-  overflow: auto;
-  border-radius: 12px;
+  overflow: hidden;
+  border-radius: 0;
   background: #d8f1d8;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  scrollbar-width: none;
+}
+
+.office-camera::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .office-map {
@@ -1251,7 +1257,8 @@ kbd {
 
 .map-overlay {
   position: absolute;
-  z-index: 40;
+  z-index: 60;
+  pointer-events: auto;
 }
 
 .top-status {
@@ -1801,7 +1808,7 @@ kbd {
 
 .mini-map {
   left: 24px;
-  bottom: 14px;
+  bottom: 18px;
   width: 145px;
   height: 96px;
   border-radius: 18px;
@@ -1962,7 +1969,7 @@ kbd {
 
 .coordinates {
   right: 22px;
-  bottom: 25px;
+  bottom: 27px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -3173,12 +3180,8 @@ kbd {
     grid-template-columns: 300px minmax(0, 1fr);
   }
 
-  .right-rail {
-    display: none;
-  }
-
   .office-camera {
-    inset: 58px 0 118px;
+    inset: 0;
   }
 
   .meeting-panel {
@@ -3260,7 +3263,7 @@ kbd {
   }
 
   .office-camera {
-    inset: 52vh 0 104px;
+    inset: 0;
     border-radius: 0;
   }
 
