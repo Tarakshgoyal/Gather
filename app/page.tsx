@@ -413,6 +413,7 @@ export default function Home() {
   const [officeMode, setOfficeMode] = useState<"create" | "join">("create");
   const [officeForm, setOfficeForm] = useState({ name: "", code: "" });
   const [officeStatus, setOfficeStatus] = useState("");
+  const [inviteStatus, setInviteStatus] = useState("");
   const [officeBusy, setOfficeBusy] = useState(false);
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarRoomId, setCalendarRoomId] = useState("all");
@@ -475,6 +476,7 @@ export default function Home() {
     let stopped = false;
     const currentSession = session;
     async function loadOffices() {
+      const inviteCode = new URLSearchParams(window.location.search).get("office")?.trim().toUpperCase() ?? "";
       const response = await fetch("/api/offices", { cache: "no-store" }).catch(() => null);
       if (!response?.ok || stopped) {
         if (!stopped) {
@@ -486,10 +488,19 @@ export default function Home() {
       }
       const data = await response.json() as { offices: OfficeMembership[] };
       const savedOfficeId = window.localStorage.getItem(officeStorageKey(currentSession.id));
-      const nextActiveOffice = data.offices.find((office) => office.id === savedOfficeId) ?? data.offices[0] ?? null;
+      const invitedOffice = inviteCode ? data.offices.find((office) => office.code === inviteCode) ?? null : null;
+      const nextActiveOffice = invitedOffice ?? data.offices.find((office) => office.id === savedOfficeId) ?? data.offices[0] ?? null;
       setOffices(data.offices);
       setActiveOffice(nextActiveOffice);
-      setOfficeDialogOpen(!nextActiveOffice);
+      if (nextActiveOffice) window.localStorage.setItem(officeStorageKey(currentSession.id), nextActiveOffice.id);
+      if (inviteCode && !invitedOffice) {
+        setOfficeMode("join");
+        setOfficeForm((current) => ({ ...current, code: inviteCode }));
+        setOfficeStatus("Join this office to enter the invited workspace.");
+        setOfficeDialogOpen(true);
+      } else {
+        setOfficeDialogOpen(!nextActiveOffice);
+      }
     }
 
     void loadOffices();
@@ -642,6 +653,21 @@ export default function Home() {
     lastChatIdRef.current = 0;
     setActiveTool("map");
   }, [session]);
+
+  const copyInviteLink = useCallback(async () => {
+    if (!activeOffice || typeof window === "undefined") return;
+    const inviteUrl = new URL(window.location.href);
+    inviteUrl.searchParams.set("office", activeOffice.code);
+    inviteUrl.hash = "";
+    const text = inviteUrl.toString();
+    try {
+      await navigator.clipboard.writeText(text);
+      setInviteStatus("Invite link copied.");
+    } catch {
+      setInviteStatus(text);
+    }
+    window.setTimeout(() => setInviteStatus(""), 2600);
+  }, [activeOffice]);
 
   const markNotificationAsRead = useCallback(async (notificationId: number) => {
     const response = await fetch("/api/notifications", {
@@ -1350,7 +1376,7 @@ export default function Home() {
             ) : (
               <aside className="people-drawer">
                 <div className="drawer-top">
-                  <h1>abcde</h1>
+                  <h1>{activeOffice?.name ?? "Office"}</h1>
                   <button aria-label="Collapse sidebar" className="tiny-icon" onClick={() => setLeftDrawerHidden(true)} type="button">
                     <PanelLeftClose size={18} />
                   </button>
@@ -1359,7 +1385,8 @@ export default function Home() {
                   <h2>Experience Gather together</h2>
                   <p>Invite your closest collaborators.</p>
                   <div className="invite-faces">{["A", "B", "C", "D", "E"].map((face, index) => <span aria-hidden="true" className={`invite-face face-${index}`} key={face}><span /></span>)}</div>
-                  <button className="invite-button" type="button"><span>Invite</span><span className="copy-mark">link</span></button>
+                  <button className="invite-button" disabled={!activeOffice} onClick={copyInviteLink} type="button"><span>Invite</span><span className="copy-mark">link</span></button>
+                  {inviteStatus ? <small className="invite-status">{inviteStatus}</small> : null}
                 </section>
                 <label className="search-box account-box">
                   <input aria-label="Employee name" disabled placeholder="Sign in as an employee" value={session?.name ?? ""} />

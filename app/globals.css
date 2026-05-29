@@ -597,6 +597,10 @@ button {
 }
 
 .drawer-top h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   font-size: 24px;
   font-weight: 900;
@@ -729,6 +733,22 @@ button {
   color: white;
   font-weight: 900;
   box-shadow: inset -36px 0 0 rgba(55, 61, 202, 0.58);
+}
+
+.invite-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.invite-status {
+  display: block;
+  margin-top: 8px;
+  overflow: hidden;
+  color: #1f7469;
+  font-size: 12px;
+  font-weight: 1000;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .copy-mark {
