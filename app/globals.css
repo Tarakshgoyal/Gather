@@ -2094,12 +2094,14 @@ kbd {
 .calendar-sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   gap: 14px;
   margin: 6px 8px 8px 0;
   border-radius: 0 22px 22px 0;
   background: rgba(255, 255, 255, 0.96);
   padding: 18px;
+  overflow: hidden;
   box-shadow: 0 12px 32px rgba(28, 34, 38, 0.12);
 }
 
@@ -2141,9 +2143,14 @@ kbd {
 
 .calendar-agenda {
   display: grid;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
   gap: 10px;
   color: #656b74;
   font-weight: 800;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .calendar-agenda article {
@@ -2244,8 +2251,12 @@ kbd {
 }
 
 .calendar-grid {
+  position: relative;
+  height: 100%;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .calendar-days {
@@ -2271,7 +2282,7 @@ kbd {
 .calendar-body {
   display: grid;
   grid-template-columns: 90px minmax(980px, 1fr);
-  min-height: 1728px;
+  min-height: 1824px;
 }
 
 .calendar-hours {
@@ -2295,6 +2306,7 @@ kbd {
 
 .calendar-day-column {
   position: relative;
+  min-height: 1728px;
   border-right: 1px solid #f0f0f0;
 }
 
