@@ -7,7 +7,6 @@ export type AuthUser = {
   name: string;
   email: string;
   skin: string;
-  emailVerified: boolean;
 };
 
 type JwtPayload = {
@@ -85,12 +84,7 @@ export async function verifyPassword(password: string, storedHash: string) {
   return crypto.timingSafeEqual(candidate, Buffer.from(hash, "base64url"));
 }
 
-export function createVerificationToken() {
-  const token = crypto.randomBytes(32).toString("base64url");
-  return { token, tokenHash: hashVerificationToken(token) };
-}
 
-export function hashVerificationToken(token: string) {
-  return crypto.createHash("sha256").update(token).digest("base64url");
-}
+
+
 

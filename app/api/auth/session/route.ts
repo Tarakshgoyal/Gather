@@ -10,7 +10,7 @@ export async function GET() {
   if (!payload) return Response.json({ user: null });
 
   const user = await findAuthUserById(payload.sub);
-  if (!user || !user.emailVerified) return Response.json({ user: null });
+  if (!user) return Response.json({ user: null });
 
   return Response.json({
     user: { id: user.id, name: user.name, email: user.email, skin: user.skin },

@@ -14,7 +14,7 @@ export async function getRequestUser(request: Request) {
   const payload = verifySessionToken(token ? decodeURIComponent(token) : undefined);
   if (!payload) return null;
   const user = await findAuthUserById(payload.sub);
-  if (!user || !user.emailVerified) return null;
+  if (!user) return null;
   return { id: user.id, name: user.name, email: user.email, skin: user.skin };
 }
 
@@ -24,3 +24,4 @@ export function getRequestJwtUser(request: Request) {
   if (!payload) return null;
   return { id: payload.sub, name: payload.name, email: payload.email, skin: payload.skin };
 }
+

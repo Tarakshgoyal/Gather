@@ -1032,7 +1032,6 @@ function mapAuthUser(row: {
     name: row.name,
     email: row.email,
     skin: row.skin,
-    emailVerified: Boolean(row.email_verified_at),
     passwordHash: row.password_hash,
   } satisfies StoredAuthUser;
 }
@@ -1077,7 +1076,7 @@ export async function findAuthUserById(id: string) {
   return result.rows[0] ? mapAuthUser(result.rows[0]) : null;
 }
 
-export async function upsertUnverifiedAuthUser(user: {
+export async function upsertAuthUser(user: {
   id: string;
   name: string;
   email: string;
@@ -1095,13 +1094,14 @@ export async function upsertUnverifiedAuthUser(user: {
     skin: string;
     email_verified_at: Date | null;
   }>(
-    `INSERT INTO auth_users (id, name, email, password_hash, skin)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO auth_users (id, name, email, password_hash, skin, email_verified_at)
+     VALUES ($1, $2, $3, $4, $5, now())
      ON CONFLICT (email)
      DO UPDATE SET
-       name = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.name ELSE auth_users.name END,
-       password_hash = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.password_hash ELSE auth_users.password_hash END,
-       skin = CASE WHEN auth_users.email_verified_at IS NULL THEN EXCLUDED.skin ELSE auth_users.skin END,
+       name = EXCLUDED.name,
+       password_hash = EXCLUDED.password_hash,
+       skin = EXCLUDED.skin,
+       email_verified_at = COALESCE(auth_users.email_verified_at, now()),
        updated_at = now()
      RETURNING id, name, email, password_hash, skin, email_verified_at`,
     [user.id, user.name, user.email.toLowerCase(), user.passwordHash, user.skin],
@@ -1109,65 +1109,5 @@ export async function upsertUnverifiedAuthUser(user: {
   return result.rows[0] ? mapAuthUser(result.rows[0]) : null;
 }
 
-export async function createEmailVerificationToken(userId: string, tokenHash: string) {
-  const pool = getPool();
-  if (!pool) return null;
-  await ensureDatabase();
-  await pool.query(
-    `DELETE FROM email_verification_tokens
-      WHERE user_id = $1 OR expires_at < now() OR used_at IS NOT NULL`,
-    [userId],
-  );
-  await pool.query(
-    `INSERT INTO email_verification_tokens (token_hash, user_id, expires_at)
-     VALUES ($1, $2, now() + interval '30 minutes')`,
-    [tokenHash, userId],
-  );
-  return true;
-}
 
-export async function verifyEmailToken(tokenHash: string) {
-  const pool = getPool();
-  if (!pool) return null;
-  await ensureDatabase();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const tokenResult = await client.query<{ user_id: string }>(
-      `UPDATE email_verification_tokens
-          SET used_at = now()
-        WHERE token_hash = $1
-          AND used_at IS NULL
-          AND expires_at > now()
-        RETURNING user_id`,
-      [tokenHash],
-    );
-    const userId = tokenResult.rows[0]?.user_id;
-    if (!userId) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-    const userResult = await client.query<{
-      id: string;
-      name: string;
-      email: string;
-      password_hash: string;
-      skin: string;
-      email_verified_at: Date | null;
-    }>(
-      `UPDATE auth_users
-          SET email_verified_at = COALESCE(email_verified_at, now()),
-              updated_at = now()
-        WHERE id = $1
-        RETURNING id, name, email, password_hash, skin, email_verified_at`,
-      [userId],
-    );
-    await client.query("COMMIT");
-    return userResult.rows[0] ? mapAuthUser(userResult.rows[0]) : null;
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
+

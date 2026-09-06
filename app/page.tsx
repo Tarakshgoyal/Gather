@@ -452,8 +452,6 @@ export default function Home() {
     async function loadSession() {
       const response = await fetch("/api/auth/session").catch(() => null);
       if (stopped) return;
-      if (authResult === "verified") setAuthStatus("Email verified. Entering the office...");
-      if (authResult === "invalid-verification") setAuthStatus("That verification link is invalid or expired. Register again to get a fresh link.");
       if (response?.ok) {
         const data = await response.json() as { user: EmployeeSession | null };
         if (data.user) setSession(data.user);
@@ -559,13 +557,6 @@ export default function Home() {
     const data = await response.json().catch(() => ({})) as { user?: EmployeeSession; error?: string; message?: string };
     if (!response.ok) {
       setAuthStatus(data.error ?? "Authentication failed.");
-      setAuthBusy(false);
-      return;
-    }
-
-    if (authMode === "register") {
-      setAuthStatus(data.message ?? "Verification email sent. Open the link in your inbox to enter.");
-      setAuthMode("login");
       setAuthBusy(false);
       return;
     }
@@ -1899,7 +1890,7 @@ function AuthDialog({
       <section className="auth-card">
         <span className="auth-kicker">Gather office</span>
         <h2>{isRegister ? "Create your employee account" : "Sign in to the office"}</h2>
-        <p>{isRegister ? "Use a real email. We will send a verification link before opening the workspace." : "Enter with your verified employee email and password."}</p>
+        <p>{isRegister ? "Create an employee login for this office workspace." : "Enter with your employee email and password."}</p>
         <form
           className="auth-form"
           onSubmit={(event) => {
@@ -1913,7 +1904,7 @@ function AuthDialog({
           <input autoFocus={!isRegister} aria-label="Employee email" autoComplete="email" placeholder="Email address" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
           <input aria-label="Employee password" autoComplete={isRegister ? "new-password" : "current-password"} placeholder="Password" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
           {status ? <p className="auth-status">{status}</p> : null}
-          <button disabled={busy} type="submit">{busy ? "Please wait..." : isRegister ? "Send verification email" : "Enter office"}</button>
+          <button disabled={busy} type="submit">{busy ? "Please wait..." : isRegister ? "Create account" : "Enter office"}</button>
         </form>
         <button
           className="auth-switch"
@@ -1924,7 +1915,7 @@ function AuthDialog({
             setMode(isRegister ? "login" : "register");
           }}
         >
-          {isRegister ? "Already verified? Sign in" : "Need an account? Register"}
+          {isRegister ? "Already have an account? Sign in" : "Need an account? Register"}
         </button>
       </section>
     </div>
@@ -2567,3 +2558,5 @@ function LeftRail({
 function PersonRow({ name, status, tone }: { name: string; status: string; tone: string }) {
   return <div className="person-row"><span className={`person-avatar avatar-${tone}`}>{name[0]}</span><span><strong>{name}</strong><small>{status}</small></span></div>;
 }
+
+

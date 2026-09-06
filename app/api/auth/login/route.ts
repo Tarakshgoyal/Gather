@@ -16,9 +16,6 @@ export async function POST(request: Request) {
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
     return Response.json({ error: "Invalid email or password." }, { status: 401 });
   }
-  if (!user.emailVerified) {
-    return Response.json({ error: "Verify your email before entering the office." }, { status: 403 });
-  }
 
   const response = NextResponse.json({
     user: { id: user.id, name: user.name, email: user.email, skin: user.skin },
@@ -32,4 +29,3 @@ export async function POST(request: Request) {
   });
   return response;
 }
-
