@@ -54,6 +54,27 @@ function escapeAddress(address: string) {
   return address.replace(/[<>\r\n]/g, "");
 }
 
+function escapeHeader(value: string) {
+  return value.replace(/[\r\n]/g, " ").trim();
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[<>&"]/g, (character) => {
+    switch (character) {
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case "&":
+        return "&amp;";
+      case "\"":
+        return "&quot;";
+      default:
+        return character;
+    }
+  });
+}
+
 function normalizeData(input: string) {
   return input.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
 }
@@ -85,8 +106,13 @@ export async function sendVerificationEmail(to: string, name: string, verificati
   await sendCommand(socket, "DATA", [354]);
 
   const subject = "Verify your Gather office email";
+  const safeTo = escapeAddress(to);
+  const safeName = escapeHeader(name);
+  const safeHtmlName = escapeHtml(name);
+  const safeVerificationUrl = escapeHtml(verificationUrl);
+  const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2)}@gather-office.local>`;
   const text = [
-    `Hi ${name},`,
+    `Hi ${safeName},`,
     "",
     "Verify your email to enter the Gather office:",
     verificationUrl,
@@ -96,28 +122,36 @@ export async function sendVerificationEmail(to: string, name: string, verificati
   const html = `
     <div style="font-family:Arial,sans-serif;color:#20242a;line-height:1.5">
       <h2>Verify your Gather office email</h2>
-      <p>Hi ${name.replace(/[<>&]/g, "")},</p>
+      <p>Hi ${safeHtmlName},</p>
       <p>Verify your email to enter the office.</p>
-      <p><a href="${verificationUrl}" style="display:inline-block;background:#4e55ec;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">Verify email</a></p>
+      <p><a href="${safeVerificationUrl}" style="display:inline-block;background:#4e55ec;color:#fff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700">Verify email</a></p>
+      <p style="word-break:break-all;color:#67707a">${safeVerificationUrl}</p>
       <p style="color:#67707a">This link expires in 30 minutes.</p>
     </div>
   `;
   const message = [
     `From: Gather Office <${config.user}>`,
-    `To: ${to}`,
+    `To: ${safeTo}`,
+    `Reply-To: ${config.user}`,
     `Subject: ${subject}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: ${messageId}`,
+    "X-Mailer: Gather Office",
     "MIME-Version: 1.0",
     "Content-Type: multipart/alternative; boundary=gather-auth-boundary",
     "",
     "--gather-auth-boundary",
     "Content-Type: text/plain; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
     "",
     text,
     "--gather-auth-boundary",
     "Content-Type: text/html; charset=utf-8",
+    "Content-Transfer-Encoding: 8bit",
     "",
     html,
     "--gather-auth-boundary--",
+    "",
   ].join("\r\n");
 
   socket.write(`${normalizeData(message)}\r\n.\r\n`);
